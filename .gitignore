@@ -1,0 +1,37 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# local TLS certificates / private keys (NEVER commit)
+certs/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# env
+.env
+.env.*
+!.env.example
+
+# logs / caches
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.vite/
+coverage/
+.vitest/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
