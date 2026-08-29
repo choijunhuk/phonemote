@@ -20,7 +20,8 @@ export function formatSnapshot(snapshot: SensorSnapshot, sent: number, hz: numbe
     `orient  a${fixed(orientation.alpha)} b${fixed(orientation.beta)} g${fixed(orientation.gamma)}`,
     `rate    a${fixed(rotationRate.alpha)} b${fixed(rotationRate.beta)} g${fixed(rotationRate.gamma)}`,
     `accel   x${fixed(acceleration.x, 2)} y${fixed(acceleration.y, 2)} z${fixed(acceleration.z, 2)}`,
-    `screen  ${ORIENTATION_NAMES[screenOrientation] ?? '?'} (${screenOrientation})`,
+    `screen  보냄 ${ORIENTATION_NAMES[screenOrientation] ?? '?'}(${screenOrientation})` +
+      `  폰보고 ${ORIENTATION_NAMES[snapshot.reportedOrientation] ?? '?'}(${snapshot.reportedOrientation})`,
     `sent    ${sent} frames @ ${hz.toFixed(0)} Hz`,
   ].join('\n');
 }

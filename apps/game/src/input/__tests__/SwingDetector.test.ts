@@ -3,6 +3,7 @@ import {
   SWING_CAPTURE_WINDOW_MS,
   SWING_COOLDOWN_MS,
   SWING_MAX,
+  SWING_MIN_WINDOW_MS,
   SWING_THRESHOLD,
   SwingDetector,
   direction8Of,
@@ -55,7 +56,7 @@ describe('strength', () => {
   });
 
   it('clamps beyond the maximum', () => {
-    expect(swingStrength(50)).toBe(1);
+    expect(swingStrength(SWING_MAX + 40)).toBe(1);
     expect(swingStrength(0)).toBe(0);
   });
 
@@ -123,9 +124,26 @@ describe('detection', () => {
 
   it('carries the player id and the phone timestamp', () => {
     const detector = new SwingDetector();
-    const [event] = swingOnce(detector, 5000, 30);
+    const [event] = swingOnce(detector, 5000, 60);
     expect(event?.playerId).toBe(1);
-    expect(event?.timestamp).toBe(5000 + SWING_CAPTURE_WINDOW_MS);
+    // Fired on the sample where the burst had clearly subsided, which is what
+    // keeps the hit feeling immediate rather than a fixed window late.
+    expect(event?.timestamp).toBeLessThanOrEqual(5000 + SWING_CAPTURE_WINDOW_MS);
+    expect(event?.timestamp).toBeGreaterThanOrEqual(5000 + SWING_MIN_WINDOW_MS);
+  });
+
+  it('fires as soon as the burst subsides, not at the end of the window', () => {
+    const detector = new SwingDetector();
+    const push = (t: number, magnitude: number): DetectorEvent | null =>
+      detector.update(frame(t, { x: 0, y: 0, z: -magnitude }));
+
+    expect(push(0, 80)).toBeNull();
+    // Still peaking at 20 ms: too early to tell the peak from the ramp.
+    expect(push(20, 95)).toBeNull();
+    const event = push(40, 5);
+    expect(event).not.toBeNull();
+    expect(event?.timestamp).toBe(40);
+    expect(event?.strength).toBe(1);
   });
 
   it('forgets everything on reset', () => {

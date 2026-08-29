@@ -44,6 +44,7 @@ function start(): void {
 function run(roomCode: string, name: string): void {
   const sensors = new SensorSource();
   sensors.start();
+  ui.onHoldModeChange((mode) => sensors.setHoldMode(mode));
 
   const url = `wss://${window.location.hostname}:${PORTS.relay}`;
   let seq = 0;

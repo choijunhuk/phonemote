@@ -14,8 +14,23 @@ export interface SensorSnapshot {
   readonly orientation: EulerAngles;
   readonly rotationRate: EulerAngles;
   readonly acceleration: Vector3;
+  /** What is sent on the wire, after any hold override. */
   readonly screenOrientation: ScreenOrientationValue;
+  /** What the browser actually reported, for the debug readout. */
+  readonly reportedOrientation: ScreenOrientationValue;
 }
+
+/**
+ * How the player is holding the phone.
+ *
+ * 'auto' trusts screen.orientation, which is the honest answer but a lie
+ * whenever rotation lock is on: Chrome keeps reporting portrait-primary no
+ * matter how the phone is physically held, and the normaliser then rotates the
+ * axes by 90 degrees too few, swapping pitch and roll. Since the canonical pose
+ * is landscape anyway (ARCHITECTURE.md 5.1), stating the hold is both safer and
+ * more truthful than trusting a value the OS refuses to update.
+ */
+export type HoldMode = 'auto' | 'landscape' | 'portrait';
 
 export interface SupportReport {
   readonly supported: boolean;
@@ -42,6 +57,7 @@ function screenOrientationValue(): ScreenOrientationValue {
 }
 
 export class SensorSource {
+  private holdMode: HoldMode = 'landscape';
   private orientation: EulerAngles = ZERO_ANGLES;
   private rotationRate: EulerAngles = ZERO_ANGLES;
   private acceleration: Vector3 = ZERO_VECTOR;
@@ -76,6 +92,10 @@ export class SensorSource {
     }
   };
 
+  setHoldMode(mode: HoldMode): void {
+    this.holdMode = mode;
+  }
+
   get isReceiving(): boolean {
     return this.seenMotion && this.seenOrientation;
   }
@@ -95,11 +115,15 @@ export class SensorSource {
   }
 
   read(): SensorSnapshot {
+    const reported = screenOrientationValue();
+    const applied: ScreenOrientationValue =
+      this.holdMode === 'landscape' ? 1 : this.holdMode === 'portrait' ? 0 : reported;
     return {
       orientation: this.orientation,
       rotationRate: this.rotationRate,
       acceleration: this.acceleration,
-      screenOrientation: screenOrientationValue(),
+      screenOrientation: applied,
+      reportedOrientation: reported,
     };
   }
 }

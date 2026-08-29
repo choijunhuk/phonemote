@@ -1,4 +1,5 @@
 import { BUTTON, type ButtonName } from '@phonemote/protocol';
+import type { HoldMode } from './sensors.js';
 import type { ConnectionState } from './transport.js';
 
 /**
@@ -13,6 +14,12 @@ export interface JoinRequest {
   readonly roomCode: string;
   readonly name: string;
 }
+
+const HOLD_LABELS: ReadonlyArray<{ mode: HoldMode; label: string }> = [
+  { mode: 'landscape', label: '가로로 들기' },
+  { mode: 'portrait', label: '세로로 들기' },
+  { mode: 'auto', label: '자동' },
+];
 
 const BUTTON_LAYOUT: ReadonlyArray<{
   name: ButtonName;
@@ -43,8 +50,11 @@ export class ControllerUi {
   private readonly debugSection = document.createElement('pre');
   private readonly roomInput = document.createElement('input');
   private readonly nameInput = document.createElement('input');
+  private readonly holdControl = document.createElement('div');
 
   private buttons = 0;
+  private holdMode: HoldMode = 'landscape';
+  private onHoldChange: ((mode: HoldMode) => void) | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -53,13 +63,58 @@ export class ControllerUi {
     this.debugSection.className = 'debug';
     this.padSection.className = 'pad hidden';
     this.joinSection.className = 'join';
-    this.root.append(this.statusEl, this.joinSection, this.padSection, this.debugSection);
+    this.holdControl.className = 'hold-holder hidden';
+    this.root.append(
+      this.statusEl,
+      this.joinSection,
+      this.padSection,
+      this.holdControl,
+      this.debugSection,
+    );
     this.buildPad();
   }
 
   /** Current button bitmask, read once per frame by the sender. */
   get buttonMask(): number {
     return this.buttons;
+  }
+
+  /**
+   * The hold control stays reachable after joining: rotation lock is invisible
+   * from in here, so the player has to be able to fix it while playing.
+   */
+  onHoldModeChange(listener: (mode: HoldMode) => void): void {
+    this.onHoldChange = listener;
+    listener(this.holdMode);
+  }
+
+  private buildHoldControl(): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'hold';
+
+    const caption = document.createElement('span');
+    caption.className = 'hold-caption';
+    caption.textContent = '잡는 방향';
+    row.append(caption);
+
+    for (const { mode, label } of HOLD_LABELS) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'hold-option';
+      button.textContent = label;
+      button.dataset['mode'] = mode;
+      button.classList.toggle('selected', mode === this.holdMode);
+
+      button.addEventListener('click', () => {
+        this.holdMode = mode;
+        for (const other of row.querySelectorAll('.hold-option')) {
+          other.classList.toggle('selected', other === button);
+        }
+        this.onHoldChange?.(mode);
+      });
+      row.append(button);
+    }
+    return row;
   }
 
   showJoinForm(prefilledRoom: string, onJoin: (request: JoinRequest) => void): void {
@@ -96,7 +151,15 @@ export class ControllerUi {
     caLink.href = '/rootCA.crt';
     caLink.textContent = '인증서 경고가 뜬다면: 루트 CA 내려받기';
 
-    this.joinSection.replaceChildren(title, hint, this.roomInput, this.nameInput, submit, caLink);
+    this.joinSection.replaceChildren(
+      title,
+      hint,
+      this.roomInput,
+      this.nameInput,
+      this.buildHoldControl(),
+      submit,
+      caLink,
+    );
     this.joinSection.addEventListener('submit', (event) => {
       event.preventDefault();
       const roomCode = this.roomInput.value.trim().toUpperCase();
@@ -111,6 +174,8 @@ export class ControllerUi {
   showPad(color: string, playerId: number): void {
     this.joinSection.classList.add('hidden');
     this.padSection.classList.remove('hidden');
+    this.holdControl.replaceChildren(this.buildHoldControl());
+    this.holdControl.classList.remove('hidden');
     document.body.style.setProperty('--player', color);
     this.setStatus('joined', `P${playerId}`);
   }

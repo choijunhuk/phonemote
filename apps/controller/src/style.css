@@ -175,3 +175,32 @@ button.start {
   text-align: center;
   text-decoration: underline;
 }
+
+.hold {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.hold-caption {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-right: 0.2rem;
+}
+
+.hold-option {
+  background: var(--panel);
+  border: 1px solid #2c3242;
+  border-radius: 0.5rem;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.6rem;
+}
+
+.hold-option.selected {
+  background: var(--player);
+  border-color: var(--player);
+  color: white;
+}

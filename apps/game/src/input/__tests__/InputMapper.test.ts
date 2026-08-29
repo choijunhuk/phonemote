@@ -93,14 +93,14 @@ describe('modes', () => {
   it('emits a swing when the phone is thrust forward', () => {
     const mapper = new InputMapper({ swing: true });
     mapper.update(raw({ timestamp: 0 }));
-    mapper.update(raw({ timestamp: 16, acceleration: { x: 0, y: 0, z: -30 } }));
-    mapper.update(raw({ timestamp: 60, acceleration: { x: 0, y: 0, z: -35 } }));
+    mapper.update(raw({ timestamp: 16, acceleration: { x: 0, y: 0, z: -40 } }));
+    mapper.update(raw({ timestamp: 60, acceleration: { x: 0, y: 0, z: -90 } }));
     const actions = mapper.update(raw({ timestamp: 130, acceleration: { x: 0, y: 0, z: 0 } }));
 
     const swing = actions.find((action) => action.kind === 'swing');
     expect(swing).toBeDefined();
     if (swing?.kind !== 'swing') return;
-    expect(swing.strength).toBeCloseTo(0.8, 5);
+    expect(swing.strength).toBe(1);
     expect(swing.playerId).toBe(1);
   });
 

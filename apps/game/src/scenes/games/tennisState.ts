@@ -40,9 +40,14 @@ export interface TennisState {
   rally: number;
 }
 
-export const HIT_ZONE = 0.18;
-export const BASE_SPEED = 0.55;
-export const MAX_SPEED = 1.5;
+/**
+ * Tuned down after playing it: at the original 0.55-1.5 the ball crossed the
+ * court in well under a second and the hit window was a fraction of that,
+ * which is not a timing game so much as a coin toss.
+ */
+export const HIT_ZONE = 0.26;
+export const BASE_SPEED = 0.32;
+export const MAX_SPEED = 0.8;
 const POINT_PAUSE_SECONDS = 1.2;
 
 export const DEFAULT_CONFIG: TennisConfig = { players: 2, pointsToWin: 5, missesAllowed: 3 };

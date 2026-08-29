@@ -11,10 +11,21 @@ import type { CanonicalSensorFrame, CanonicalVector, Direction8 } from './types.
  * shorten the window.
  */
 
-export const SWING_THRESHOLD = 15;
-export const SWING_MAX = 40;
-export const SWING_CAPTURE_WINDOW_MS = 100;
+/**
+ * Calibrated against a real phone, not the spec's first guess of 15/40: a
+ * deliberate swing peaks near 100 m/s^2, so a 40 ceiling made every swing
+ * read as maximum strength and every ball come back at full speed.
+ */
+export const SWING_THRESHOLD = 25;
+export const SWING_MAX = 90;
+
+/** Long enough for the peak to develop, short enough to still feel immediate. */
+export const SWING_MIN_WINDOW_MS = 25;
+export const SWING_CAPTURE_WINDOW_MS = 80;
 export const SWING_COOLDOWN_MS = 300;
+
+/** Once the burst has fallen this far below its peak, the swing is over. */
+export const SWING_DECAY_RATIO = 0.5;
 
 export interface SwingEvent {
   readonly playerId: number;
@@ -62,7 +73,15 @@ export class SwingDetector {
         this.capture.peak = strengthNow;
         this.capture.peakVector = frame.acceleration;
       }
-      if (now - this.capture.startedAt < SWING_CAPTURE_WINDOW_MS) return null;
+
+      // Waiting out a fixed window would add its full length to every hit. Fire
+      // as soon as the burst is clearly past its peak; the window is only the
+      // backstop for a swing that never settles.
+      const elapsed = now - this.capture.startedAt;
+      const subsided =
+        strengthNow < Math.max(SWING_THRESHOLD, this.capture.peak * SWING_DECAY_RATIO);
+      if (elapsed < SWING_MIN_WINDOW_MS) return null;
+      if (!subsided && elapsed < SWING_CAPTURE_WINDOW_MS) return null;
 
       const event: SwingEvent = {
         playerId: frame.playerId,
