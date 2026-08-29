@@ -18,7 +18,7 @@ function serveRootCa(): Plugin {
     name: 'phonemote-serve-root-ca',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (!req.url?.startsWith('/rootCA.crt')) return next();
+        if (!req.url?.startsWith('/rootCA')) return next();
         res.setHeader('content-type', 'application/x-x509-ca-cert');
         res.setHeader('content-disposition', 'attachment; filename="rootCA.crt"');
         next();

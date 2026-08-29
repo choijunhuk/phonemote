@@ -38,3 +38,5 @@ desktop.ini
 
 # root CA copy published to the phone by scripts/setup-certs.sh
 apps/controller/public/rootCA.crt
+
+apps/controller/public/rootCA-der.crt

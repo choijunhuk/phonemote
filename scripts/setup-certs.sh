@@ -52,6 +52,12 @@ public_dir="$repo_root/apps/controller/public"
 mkdir -p "$public_dir"
 cp "$caroot/rootCA.pem" "$public_dir/rootCA.crt"
 
+# Android's certificate installer is pickier about PEM than about DER on some
+# devices, so publish a DER copy as well and let the phone try both.
+if command -v openssl >/dev/null 2>&1; then
+  openssl x509 -in "$caroot/rootCA.pem" -outform der -out "$public_dir/rootCA-der.crt"
+fi
+
 lan_ip=$(printf '%s\n' "$hosts" | grep -E '^(10\.|192\.168\.|172\.)' | head -n 1 || true)
 lan_ip=${lan_ip:-<LAN-IP>}
 
@@ -61,7 +67,8 @@ printf '%s\n' "$hosts" | sed 's/^/  /'
 echo
 echo "Root CA for the phone:"
 echo "  on this PC : $caroot/rootCA.pem"
-echo "  on the phone: https://$lan_ip:5174/rootCA.crt"
+echo "  on the phone: https://$lan_ip:5174/rootCA.crt      (PEM)"
+echo "                https://$lan_ip:5174/rootCA-der.crt  (DER, if PEM is refused)"
 echo
 echo "Download that URL on the phone, then install it from"
 echo "Settings > Security > Encryption & credentials > Install a certificate > CA certificate."
