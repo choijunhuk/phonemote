@@ -1,21 +1,30 @@
+import Phaser from 'phaser';
+import { CalibrationScene } from './scenes/CalibrationScene.js';
+import { LobbyScene } from './scenes/LobbyScene.js';
+import { PointerTest } from './scenes/games/PointerTest.js';
+import { Tennis } from './scenes/games/Tennis.js';
+import { session } from './session.js';
+import { DebugOverlay } from './ui/DebugOverlay.js';
+
 /**
- * Game entry point.
- *
- * Phase 0 scope: a placeholder page that proves the HTTPS dev server is up on
- * the fixed port. Phaser, the lobby and the input pipeline arrive in Phase 1.
+ * Game entry point. The session owns the socket and the input pipeline; scenes
+ * only ever see GameActions (ARCHITECTURE.md P4).
  */
 
-const app = document.querySelector<HTMLElement>('#app');
-if (!app) throw new Error('#app is missing from index.html');
+session.start();
 
-const heading = document.createElement('h1');
-heading.textContent = 'PhoneMote';
+const overlay = new DebugOverlay();
+overlay.start();
 
-const subtitle = document.createElement('p');
-subtitle.textContent = 'Phase 0 — scaffolding. Lobby and games arrive in Phase 1.';
-
-app.append(heading, subtitle);
-
-// This file is loaded as an ES module; the empty export keeps TypeScript from
-// treating it as a global script.
-export {};
+new Phaser.Game({
+  type: Phaser.AUTO,
+  parent: 'app',
+  width: 1280,
+  height: 720,
+  backgroundColor: '#0f1116',
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
+  scene: [LobbyScene, CalibrationScene, PointerTest, Tennis],
+});

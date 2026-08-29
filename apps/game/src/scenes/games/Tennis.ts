@@ -1,0 +1,192 @@
+import Phaser from 'phaser';
+import { session } from '../../session.js';
+import { sfx } from '../../ui/audio.js';
+import {
+  HIT_ZONE,
+  createTennis,
+  isMatchPoint,
+  step,
+  swing,
+  type Side,
+  type TennisState,
+} from './tennisState.js';
+
+/**
+ * Tennis (ARCHITECTURE.md 11, Phase 3).
+ *
+ * All rules live in tennisState.ts; this scene draws them and translates
+ * GameActions into swings. It never sees a sensor frame (P4).
+ */
+
+const COURT_MARGIN = 0.08;
+
+export class Tennis extends Phaser.Scene {
+  private state: TennisState = createTennis();
+  private readonly sideOf = new Map<number, Side>();
+  private ball!: Phaser.GameObjects.Arc;
+  private readonly rackets = new Map<Side, Phaser.GameObjects.Rectangle>();
+  private scoreText!: Phaser.GameObjects.Text;
+  private phaseText!: Phaser.GameObjects.Text;
+  private rallyText!: Phaser.GameObjects.Text;
+  private lastPhase: TennisState['phase'] = 'serve';
+  private cleanup: (() => void) | null = null;
+
+  constructor() {
+    super('tennis');
+  }
+
+  create(): void {
+    session.configureInput({ swing: true });
+
+    const players = session.players;
+    players.forEach((player, index) => {
+      if (index < 2) this.sideOf.set(player.id, (index + 1) as Side);
+    });
+    this.state = createTennis({ players: players.length >= 2 ? 2 : 1 });
+    this.lastPhase = this.state.phase;
+
+    this.drawCourt();
+
+    this.cleanup = session.onAction((action) => {
+      if (action.kind === 'swing') {
+        const side = this.sideOf.get(action.playerId);
+        if (!side) return;
+        const result = swing(this.state, side, action.strength, action.direction8);
+        if (result.hit) {
+          sfx.hit(action.strength);
+          session.vibrate(action.playerId, [Math.round(25 + action.strength * 65)]);
+          this.cameras.main.shake(90, 0.002 + action.strength * 0.004);
+        }
+        return;
+      }
+      if (action.kind === 'button_down' && action.button === 'HOME') this.scene.start('lobby');
+      if (action.kind === 'button_down' && action.button === 'A' && this.state.phase === 'gameover') {
+        this.scene.start('lobby');
+      }
+    });
+
+    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('lobby'));
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.cleanup?.();
+      this.cleanup = null;
+      this.sideOf.clear();
+      this.rackets.clear();
+    });
+  }
+
+  override update(_time: number, delta: number): void {
+    const before = this.state.ball.vx;
+    step(this.state, delta / 1000);
+
+    // The wall in practice mode reverses the ball without anyone swinging.
+    if (this.state.config.players === 1 && before > 0 && this.state.ball.vx < 0) sfx.wall();
+
+    if (this.state.phase !== this.lastPhase) {
+      if (this.state.phase === 'point') sfx.point();
+      if (this.state.phase === 'gameover') sfx.win();
+      this.lastPhase = this.state.phase;
+    }
+
+    this.render();
+  }
+
+  private drawCourt(): void {
+    const { width, height } = this.scale;
+    const top = height * COURT_MARGIN;
+    const bottom = height * (1 - COURT_MARGIN);
+
+    this.add.rectangle(width / 2, (top + bottom) / 2, width * 0.94, bottom - top, 0x16351f);
+    this.add
+      .line(0, 0, width / 2, top, width / 2, bottom, 0xffffff, 0.35)
+      .setOrigin(0)
+      .setLineWidth(2);
+
+    for (const side of [1, 2] as Side[]) {
+      const x = side === 1 ? this.courtX(HIT_ZONE / 2) : this.courtX(1 - HIT_ZONE / 2);
+      const player = session.players[side - 1];
+      const color = player ? Number(`0x${player.color.slice(1)}`) : 0x555f70;
+      this.rackets.set(side, this.add.rectangle(x, height / 2, 14, 90, color).setAlpha(0.9));
+    }
+
+    this.ball = this.add.circle(width / 2, height / 2, 12, 0xf1f3f8);
+
+    this.scoreText = this.add
+      .text(width / 2, 18, '0 : 0', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '40px',
+        color: '#f1f3f8',
+      })
+      .setOrigin(0.5, 0);
+
+    this.phaseText = this.add
+      .text(width / 2, this.scale.height * 0.5, '', {
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: '44px',
+        color: '#ffffff',
+        align: 'center',
+      })
+      .setOrigin(0.5);
+
+    this.rallyText = this.add
+      .text(width / 2, this.scale.height - 26, '', {
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: '18px',
+        color: '#98a0b3',
+      })
+      .setOrigin(0.5, 1);
+  }
+
+  private courtX(normalised: number): number {
+    const { width } = this.scale;
+    return width * 0.03 + normalised * width * 0.94;
+  }
+
+  private courtY(normalised: number): number {
+    const { height } = this.scale;
+    const top = height * COURT_MARGIN;
+    return top + normalised * (height * (1 - 2 * COURT_MARGIN));
+  }
+
+  private render(): void {
+    this.ball.setPosition(this.courtX(this.state.ball.x), this.courtY(this.state.ball.y));
+    this.ball.setVisible(this.state.phase !== 'gameover');
+
+    // Rackets track the ball vertically: the player swings, the game positions.
+    for (const [side, racket] of this.rackets) {
+      const approaching =
+        side === 1 ? this.state.ball.vx <= 0 : this.state.ball.vx >= 0;
+      const target = approaching ? this.courtY(this.state.ball.y) : this.courtY(0.5);
+      racket.setY(Phaser.Math.Linear(racket.y, target, 0.15));
+    }
+
+    const [left, right] = this.state.score;
+    this.scoreText.setText(
+      this.state.config.players === 1
+        ? `랠리 ${this.state.rally}   실수 ${this.state.misses}/${this.state.config.missesAllowed}`
+        : `${left} : ${right}`,
+    );
+
+    this.phaseText.setText(this.phaseMessage());
+    this.rallyText.setText(
+      this.state.phase === 'gameover'
+        ? 'A 또는 ESC: 로비로'
+        : 'HOME: 로비   ·   공이 라켓 근처에 왔을 때 스윙',
+    );
+  }
+
+  private phaseMessage(): string {
+    switch (this.state.phase) {
+      case 'serve':
+        return `P${this.state.server} 서브 — 폰을 휘두르세요${isMatchPoint(this.state) ? '\n매치 포인트' : ''}`;
+      case 'point':
+        return this.state.config.players === 1 ? '아쉽다' : `P${this.state.lastPointTo ?? 1} 득점`;
+      case 'gameover':
+        return this.state.winner === null
+          ? `연습 종료 — 최고 랠리 ${this.state.rally}`
+          : `P${this.state.winner} 승리`;
+      default:
+        return '';
+    }
+  }
+}

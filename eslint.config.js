@@ -27,4 +27,31 @@ export default tseslint.config(
     files: ['apps/server/**/*.ts', '**/vite.config.ts', 'scripts/**/*.js'],
     languageOptions: { globals: globals.node },
   },
+  {
+    // ARCHITECTURE.md P4: scenes consume GameAction and nothing upstream of it.
+    // A scene that reaches for a SensorFrame has skipped the normaliser, which
+    // is exactly the bug this whole layering exists to prevent.
+    files: ['apps/game/src/scenes/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@phonemote/protocol',
+              message:
+                'Scenes must not touch the wire format. Consume GameAction from the input layer instead (ARCHITECTURE.md P4).',
+            },
+          ],
+          patterns: [
+            {
+              group: ['**/SensorNormalizer*', '**/InputMapper*', '**/net/*'],
+              message:
+                'Scenes must not reach into the input or network plumbing (ARCHITECTURE.md P4).',
+            },
+          ],
+        },
+      ],
+    },
+  },
 );
