@@ -76,7 +76,7 @@ Out of scope: iOS, Android Chrome 외 모바일 브라우저, 네이티브 앱, 
 
 ## 3. 폴더 구조
 
-리포지토리 루트 = `C:\Users\choij\Desktop\wii project` (현재 디렉터리). 별도 `phonemote/`
+리포지토리 루트 = 프로젝트 폴더 그 자체다. 별도 `phonemote/`
 하위 폴더를 만들지 않는다. → 13.1 결정 D1.
 
 ```
