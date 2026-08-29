@@ -73,3 +73,12 @@ export const SENSOR_FIELD = {
 
 /** Phones send at most this often (ARCHITECTURE.md 7.2). */
 export const SENSOR_SEND_HZ = 60;
+
+/**
+ * A controller that disappears keeps its slot this long, so a Wi-Fi blip or a
+ * screen lock does not turn the player into a new one (ARCHITECTURE.md 11).
+ */
+export const REJOIN_GRACE_MS = 10_000;
+
+/** Socket-level heartbeat: no reply within two beats and the socket is dead. */
+export const HEARTBEAT_INTERVAL_MS = 15_000;

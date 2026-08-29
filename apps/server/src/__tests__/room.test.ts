@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MAX_PLAYERS, PLAYER_COLORS, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from '@phonemote/protocol';
+import {
+  MAX_PLAYERS,
+  PLAYER_COLORS,
+  REJOIN_GRACE_MS,
+  ROOM_CODE_ALPHABET,
+  ROOM_CODE_LENGTH,
+} from '@phonemote/protocol';
 import { RoomRegistry, randomRoomCode, type Connection } from '../room.js';
 
 class FakeConnection implements Connection {
@@ -75,9 +81,12 @@ describe('joining', () => {
     const phone = new FakeConnection();
     room.addController(phone, 'junhuk');
 
-    expect(phone.messages()).toEqual([{ type: 'joined', playerId: 1, color: PLAYER_COLORS[0] }]);
+    // resumed distinguishes a fresh join from a phone reclaiming its slot.
+    expect(phone.messages()).toEqual([
+      { type: 'joined', playerId: 1, color: PLAYER_COLORS[0], resumed: false },
+    ]);
     expect(game.messages()).toEqual([
-      { type: 'player_join', playerId: 1, name: 'junhuk', color: PLAYER_COLORS[0] },
+      { type: 'player_join', playerId: 1, name: 'junhuk', color: PLAYER_COLORS[0], resumed: false },
     ]);
   });
 
@@ -161,5 +170,88 @@ describe('routing', () => {
     expect(registry.findByGame(game)?.code).toBe('TEST');
     expect(registry.findByController(phone)?.code).toBe('TEST');
     expect(registry.findByController(new FakeConnection())).toBeUndefined();
+  });
+});
+
+describe('rejoining after a drop', () => {
+  /** Controllable clock: the grace period is a rule, not a race. */
+  function fixtures() {
+    let now = 1_000_000;
+    const registry = new RoomRegistry(
+      () => 'TEST',
+      () => now,
+    );
+    const game = new FakeConnection();
+    const room = registry.create(game);
+    return { room, game, advance: (ms: number) => (now += ms) };
+  }
+
+  it('gives a returning phone its old slot back', () => {
+    const { room, advance } = fixtures();
+    const first = new FakeConnection();
+    room.addController(first, 'junhuk', 'client-a');
+    // Someone else takes a seat while the first phone is still connected.
+    room.addController(new FakeConnection(), 'other', 'client-b');
+
+    room.removeController(first);
+    advance(REJOIN_GRACE_MS - 1);
+
+    const back = new FakeConnection();
+    const result = room.addController(back, undefined, 'client-a');
+    expect(result.ok && result.player.id).toBe(1);
+    expect(back.messages().at(-1)).toMatchObject({ type: 'joined', playerId: 1, resumed: true });
+  });
+
+  it('keeps the name of a phone that rejoins silently', () => {
+    const { room } = fixtures();
+    const phone = new FakeConnection();
+    room.addController(phone, 'junhuk', 'client-a');
+    room.removeController(phone);
+
+    const result = room.addController(new FakeConnection(), undefined, 'client-a');
+    expect(result.ok && result.player.name).toBe('junhuk');
+  });
+
+  it('will not hand the held slot to a different phone', () => {
+    const { room } = fixtures();
+    const phone = new FakeConnection();
+    room.addController(phone, undefined, 'client-a');
+    room.removeController(phone);
+
+    const stranger = room.addController(new FakeConnection(), undefined, 'client-b');
+    expect(stranger.ok && stranger.player.id).toBe(2);
+  });
+
+  it('releases the slot once the grace period expires', () => {
+    const { room, advance } = fixtures();
+    const phone = new FakeConnection();
+    room.addController(phone, undefined, 'client-a');
+    room.removeController(phone);
+    advance(REJOIN_GRACE_MS + 1);
+
+    const stranger = room.addController(new FakeConnection(), undefined, 'client-b');
+    expect(stranger.ok && stranger.player.id).toBe(1);
+  });
+
+  it('treats a phone with no client id as a new player', () => {
+    const { room } = fixtures();
+    const phone = new FakeConnection();
+    room.addController(phone, 'anon');
+    room.removeController(phone);
+
+    const back = room.addController(new FakeConnection());
+    expect(back.ok && back.player.id).toBe(1);
+    // Nothing was reserved, so this is a fresh join rather than a resume.
+    expect(back.ok && back.player.name).toBe('P1');
+  });
+
+  it('still refuses a fifth controller while a slot is held', () => {
+    const { room } = fixtures();
+    const phones = [1, 2, 3, 4].map(() => new FakeConnection());
+    phones.forEach((phone, index) => room.addController(phone, undefined, `client-${index}`));
+    room.removeController(phones[0]!);
+
+    const stranger = room.addController(new FakeConnection(), undefined, 'client-new');
+    expect(stranger).toEqual({ ok: false, code: 'ROOM_FULL' });
   });
 });

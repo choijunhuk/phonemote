@@ -1,6 +1,7 @@
 import { createServer } from 'node:https';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import {
+  HEARTBEAT_INTERVAL_MS,
   PORTS,
   isClientHello,
   isFeedback,
@@ -49,7 +50,26 @@ function main(): void {
 
   const wss = new WebSocketServer({ server });
 
+  /**
+   * A phone that loses Wi-Fi leaves a socket that looks open from here and
+   * never closes. Without this the room fills with players who left.
+   */
+  const alive = new WeakSet<WebSocket>();
+  const heartbeat = setInterval(() => {
+    for (const socket of wss.clients) {
+      if (!alive.has(socket)) {
+        socket.terminate();
+        continue;
+      }
+      alive.delete(socket);
+      socket.ping();
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  wss.on('close', () => clearInterval(heartbeat));
+
   wss.on('connection', (socket: WebSocket) => {
+    alive.add(socket);
+    socket.on('pong', () => alive.add(socket));
     const connection: Connection = {
       send: (data) => {
         if (socket.readyState !== socket.OPEN) return;
@@ -64,6 +84,9 @@ function main(): void {
     };
 
     socket.on('message', (data: RawData, isBinary: boolean) => {
+      // Any traffic counts as proof of life, not just a protocol pong.
+      alive.add(socket);
+
       if (isBinary) {
         // A sensor frame. Hand it to the game socket unread.
         const room = registry.findByController(connection);
@@ -98,7 +121,7 @@ function main(): void {
           fail('ROOM_NOT_FOUND', `No room with code ${message.roomCode}.`);
           return;
         }
-        const joined = room.addController(connection, message.name);
+        const joined = room.addController(connection, message.name, message.clientId);
         if (!joined.ok) {
           fail(joined.code, 'That room already has four controllers.');
           return;

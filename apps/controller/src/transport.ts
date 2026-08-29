@@ -32,6 +32,7 @@ export class Transport {
     private readonly roomCode: string,
     private readonly handlers: TransportHandlers,
     private readonly name?: string,
+    private readonly clientId?: string,
   ) {}
 
   get currentPlayerId(): number | null {
@@ -57,6 +58,7 @@ export class Transport {
           role: 'controller',
           roomCode: this.roomCode,
           ...(this.name ? { name: this.name } : {}),
+          ...(this.clientId ? { clientId: this.clientId } : {}),
         }),
       );
     });
@@ -67,7 +69,7 @@ export class Transport {
 
       if (message.type === 'joined') {
         this.playerId = message.playerId;
-        this.handlers.onState('joined');
+        this.handlers.onState('joined', message.resumed === true ? '복귀' : undefined);
         this.handlers.onJoined(message.playerId, message.color);
         return;
       }

@@ -1,5 +1,6 @@
 import { PORTS, encodeSensor, type SensorFrame } from '@phonemote/protocol';
 import { formatSnapshot } from './debug.js';
+import { clientId } from './identity.js';
 import { SensorSource, checkSupport } from './sensors.js';
 import { Transport } from './transport.js';
 import { ControllerUi } from './ui.js';
@@ -63,6 +64,7 @@ function run(roomCode: string, name: string): void {
       },
     },
     name || undefined,
+    clientId(),
   );
   transport.connect();
 
@@ -72,7 +74,9 @@ function run(roomCode: string, name: string): void {
     const playerId = transport.currentPlayerId;
     const snapshot = sensors.read();
 
-    if (playerId !== null) {
+    // A hidden page still gets the occasional frame; sending it would only
+    // feed the game stale poses from a phone in someone's pocket.
+    if (playerId !== null && document.visibilityState === 'visible') {
       const frame: SensorFrame = {
         playerId,
         seq,

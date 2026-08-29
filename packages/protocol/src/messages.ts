@@ -9,7 +9,17 @@ export type Role = 'game' | 'controller';
 
 export type ClientHello =
   | { type: 'hello'; role: 'game' }
-  | { type: 'hello'; role: 'controller'; roomCode: string; name?: string };
+  | {
+      type: 'hello';
+      role: 'controller';
+      roomCode: string;
+      name?: string;
+      /**
+       * Stable per-phone id kept in localStorage. Lets a controller that drops
+       * off Wi-Fi come back as the same player instead of taking a new slot.
+       */
+      clientId?: string;
+    };
 
 export type ErrorCode = 'ROOM_NOT_FOUND' | 'ROOM_FULL' | 'GAME_LEFT' | 'BAD_MESSAGE';
 
@@ -17,8 +27,8 @@ export type ServerMsg =
   /** To the game: the room it just opened, plus the URL to put in the QR code. */
   | { type: 'room'; roomCode: string; wsUrl: string; controllerUrl: string }
   /** To a controller: which player it became. */
-  | { type: 'joined'; playerId: number; color: string }
-  | { type: 'player_join'; playerId: number; name: string; color: string }
+  | { type: 'joined'; playerId: number; color: string; resumed?: boolean }
+  | { type: 'player_join'; playerId: number; name: string; color: string; resumed?: boolean }
   | { type: 'player_leave'; playerId: number }
   | { type: 'error'; code: ErrorCode; message: string };
 

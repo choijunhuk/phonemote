@@ -17,6 +17,7 @@ const PING_INTERVAL_MS = 1000;
 export interface PlayerDebugInfo {
   readonly raw: SensorFrame | null;
   readonly canonical: CanonicalSensorFrame | null;
+  readonly fused: CanonicalSensorFrame | null;
   readonly latency: LatencyStats;
   readonly hz: number;
   readonly lossPercent: number;
@@ -119,6 +120,7 @@ export class GameSession {
     return {
       raw: this.rawFrames.get(playerId) ?? null,
       canonical: this.mapper.lastCanonical(playerId),
+      fused: this.mapper.lastFused(playerId),
       latency:
         this.latency.get(playerId)?.stats() ??
         ({ samples: 0, medianMs: Number.NaN, p95Ms: Number.NaN, reportable: false } as LatencyStats),

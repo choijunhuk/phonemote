@@ -6,8 +6,8 @@
 > **이 문서가 코드보다 먼저다.** 구조가 바뀌면 코드보다 이 문서를 먼저 고친다.
 > 특히 5장(좌표계)의 매핑표는 실기기 검증 결과로만 바뀌며, 코드에 임시 부호 반전을 넣지 않는다.
 
-- 상태: **Phase 0 반영됨** (Phase 1 착수 전)
-- 최종 갱신: Phase 0 종료 시점
+- 상태: **Phase 0~4 구현 반영됨** (실기기 좌표 검증 대기)
+- 최종 갱신: Phase 4 종료 시점
 
 ---
 
@@ -100,25 +100,30 @@ Out of scope: iOS, Android Chrome 외 모바일 브라우저, 네이티브 앱, 
 │           └── index.ts
 └── apps/
     ├── server/src/                # 릴레이 (게임 로직 0)
-    │   ├── index.ts               # https 서버 + ws 업그레이드 + 메시지 라우팅
-    │   ├── room.ts                # Room / RoomRegistry
+    │   ├── index.ts               # https 서버 + ws 업그레이드 + 메시지 라우팅 + 하트비트
+    │   ├── room.ts                # Room / RoomRegistry / 재접속 유예
     │   ├── lanIp.ts
+    │   ├── certHosts.ts           # 인증서 SAN 목록 출력 (setup-certs.sh용)
+    │   ├── throughput.ts          # 60Hz 파이프 측정 하네스 (개발 전용)
     │   └── https.ts               # 인증서 로드, 부재 시 친절한 에러
     ├── controller/src/            # 폰
     │   ├── main.ts                # 부트스트랩
     │   ├── sensors.ts             # capability check + raw 값 캐시 (변환 없음)
     │   ├── transport.ts           # WSS 송신, 재연결, pong
+    │   ├── identity.ts            # localStorage clientId (재접속 복구)
     │   ├── ui.ts                  # 룸코드 폼, 버튼, 상태 표시, 진동
     │   ├── debug.ts               # raw 값 표시 (Phase 1)
     │   └── wakelock.ts
     └── game/src/                  # PC
         ├── main.ts                # Phaser 부트 + 씬 등록
+        ├── session.ts             # 소켓 + 입력 파이프라인 ↔ Scene 경계
         ├── net/
         │   ├── client.ts          # WSS, 메시지 → 이벤트
         │   └── latency.ts         # ping/pong RTT 통계
         ├── input/
         │   ├── types.ts           # CanonicalSensorFrame, GameAction
         │   ├── SensorNormalizer.ts
+        │   ├── ComplementaryFilter.ts
         │   ├── InputMapper.ts
         │   ├── PointerMode.ts
         │   ├── SwingDetector.ts
@@ -129,9 +134,11 @@ Out of scope: iOS, Android Chrome 외 모바일 브라우저, 네이티브 앱, 
         │   ├── CalibrationScene.ts
         │   └── games/
         │       ├── PointerTest.ts
+        │       ├── tennisState.ts  # 규칙 (Phaser 비의존, 단위 테스트 대상)
         │       └── Tennis.ts
         └── ui/
-            └── DebugOverlay.ts
+            ├── DebugOverlay.ts
+            └── audio.ts            # Web Audio 합성 효과음
 ```
 
 의존 방향: `protocol` ← `server`, `protocol` ← `controller`, `protocol` ← `game`.
@@ -343,13 +350,20 @@ yaw   = atan2(  f.x,  f.y )     // 북 기준. 절대값 아님 → 상대값으
 // client → server
 type ClientHello =
   | { type: 'hello'; role: 'game' }
-  | { type: 'hello'; role: 'controller'; roomCode: string; name?: string };
+  | {
+      type: 'hello';
+      role: 'controller';
+      roomCode: string;
+      name?: string;
+      /** localStorage에 보관하는 폰 고유 id. 재접속 시 같은 슬롯 복구용 */
+      clientId?: string;
+    };
 
 // server → client
 type ServerMsg =
   | { type: 'room'; roomCode: string; wsUrl: string; controllerUrl: string }   // → game
-  | { type: 'joined'; playerId: number; color: string }                        // → controller
-  | { type: 'player_join'; playerId: number; name: string; color: string }     // → game
+  | { type: 'joined'; playerId: number; color: string; resumed?: boolean }     // → controller
+  | { type: 'player_join'; playerId: number; name: string; color: string; resumed?: boolean }
   | { type: 'player_leave'; playerId: number }                                 // → game
   | { type: 'error'; code: 'ROOM_NOT_FOUND' | 'ROOM_FULL' | 'GAME_LEFT'; message: string };
 
@@ -414,7 +428,11 @@ type Feedback = { type: 'vibrate'; playerId: number; pattern: number[] };
   - `ping` (game→) → 대상 playerId의 controller.
   - `pong`, 센서 프레임 (controller→) → game.
   - `vibrate` (game→) → 대상 controller.
-- Phase 1~3에서는 재접속 = 새 플레이어. identity 복구는 Phase 4.
+- **재접속 복구 (Phase 4)**: controller가 끊기면 `clientId` 기준으로 슬롯을 `REJOIN_GRACE_MS`
+  (10초) 동안 예약해 둔다. 같은 `clientId` 가 그 안에 돌아오면 같은 `playerId`·색상·이름으로
+  복귀하고 `resumed: true` 가 실린다. `clientId` 가 없는 폰은 항상 새 플레이어다.
+- **하트비트**: 15초마다 WebSocket ping. 다음 주기까지 응답이 없으면 `terminate()`.
+  Wi-Fi가 끊긴 폰의 소켓은 여기서만 정리된다(close 이벤트가 오지 않는다).
 
 ### 7.2 Controller (`apps/controller`) — 폰
 
@@ -437,6 +455,7 @@ type Feedback = { type: 'vibrate'; playerId: number; pattern: number[] };
 | `PointerMode` | canonical yawRate/pitchRate, `dt` | `{x, y}` 0~1 | 커서 위치 |
 | `SwingDetector` | canonical acceleration, `t` | swing 이벤트 | 윈도우/쿨다운 |
 | `TiltMode` | canonical pitch/roll | `{x, y}` −1~1 | 캘리브레이션 오프셋 |
+| `ComplementaryFilter` | canonical 자세 + 각속도 | 융합 자세 | 이전 pitch/roll/yaw |
 | `InputMapper` | `SensorFrame` | `GameAction[]` | 플레이어별 모드 + 이전 buttons |
 
 ```ts
@@ -460,6 +479,12 @@ type GameAction =
 - `TiltMode`: canonical `pitch`/`roll` → −1~1, 캘리브레이션 시점 오프셋, 데드존 5%, 지수 커브 옵션.
 - 시간 기준: 스윙 윈도우/쿨다운은 **폰 timestamp(idx 2)** 로 잰다. 같은 기기 안에서는 단조 증가라
   안전하고, PC 수신 지터의 영향을 받지 않는다.
+- `ComplementaryFilter` (Phase 4, 기본 켜짐): pitch/roll은 자이로 적분에 중력 기준값을 가중치
+  0.02로 계속 끌어당긴다(스파이크 억제 + 드리프트 제거). yaw는 끌어당길 절대 기준이 없으므로
+  순수 적분이며 상대값으로만 쓴다. dt가 0.25초를 넘으면 적분을 버리고 절대값에서 다시 시작한다.
+  **DebugOverlay는 융합 전 canonical 값을 그대로 보여준다** — 축 검증이 필터에 오염되면 안 된다.
+- `session.ts` 가 소켓·정규화·매핑을 모두 소유하고 Scene에는 `GameAction` 만 넘긴다.
+  P4를 코드 구조로 강제하는 지점이다.
 
 ### 7.4 Game Scene (`apps/game/src/scenes`)
 
@@ -481,8 +506,11 @@ type GameAction =
 | 전송 Hz | Node 가짜 controller가 60Hz 송신 → game 수신 ≥ 55Hz | 1 |
 | `PointerMode` | 고정 각속도 1초 이동량, 데드존, HOME 리셋, 클램프 | 2 |
 | `SwingDetector` | 1스윙=1이벤트, 쿨다운 무시, 임계 미만 무반응, strength 경계(15→0, 40→1, 50→1) | 2 |
-| Tennis 상태 머신 | Vitest | 3 |
-| P4 (Scene의 `SensorFrame` import 금지) | ESLint `no-restricted-imports` | 3 |
+| Tennis 상태 머신 | Vitest (serve→rally→point→gameover, 벽치기 포함) | 3 |
+| P4 (Scene의 `SensorFrame` import 금지) | ESLint `@typescript-eslint/no-restricted-imports` | 3 |
+| QR 라운드트립 | `qrcode` 로 렌더 → `jsqr` 로 디코딩 == `controllerUrl` | 2 |
+| 재접속 유예 | 주입한 시계로 10초 경계 검증 | 4 |
+| 상보 필터 | 스파이크 억제 / 수렴 / yaw 적분 / 스톨 후 리셋 | 4 |
 
 **실기기·사람의 체감·물리 센서가 필요한 항목은 자동 검증 대상이 아니다.** 각 Phase 보고에서
 `Automated` / `Manual` 로 나누고, Manual 항목은 확인 절차를 함께 적는다.
@@ -536,14 +564,14 @@ TypeScript는 **strict + `noUncheckedIndexedAccess`**, `any` 금지(ESLint 에�
 
 ## 11. Phase 로드맵
 
-| Phase | 목표 | 산출물 |
-|---|---|---|
-| 0 | 뼈대와 문서 | ARCHITECTURE, 모노레포, HTTPS, README |
-| 1 | 파이프라인 검증 + **좌표계 확정** | protocol, 릴레이, raw 전송, Normalizer, TiltMode, PointerTest, DebugOverlay |
-| 2 | 입력 레이어 완성 + 페어링 UX | PointerMode, SwingDetector, QR, 캘리브레이션, 리모컨 UI, 진동 |
-| 3 | 첫 게임: 테니스 | Tennis, P4 lint 강제 |
-| 4 | 정밀도와 안정성 | 상보 필터, 재접속 identity 복구, 하트비트 |
-| 5 | (선택) 확장 | WebRTC DataChannel, 두 번째 게임, 포인터 메뉴 |
+| Phase | 목표 | 산출물 | 상태 |
+|---|---|---|---|
+| 0 | 뼈대와 문서 | ARCHITECTURE, 모노레포, HTTPS, README | ✅ |
+| 1 | 파이프라인 검증 + **좌표계 확정** | protocol, 릴레이, raw 전송, Normalizer, TiltMode, PointerTest, DebugOverlay | 코드 ✅ / **실기기 확정 대기** |
+| 2 | 입력 레이어 완성 + 페어링 UX | PointerMode, SwingDetector, QR, 캘리브레이션, 리모컨 UI, 진동 | ✅ |
+| 3 | 첫 게임: 테니스 | Tennis, P4 lint 강제 | ✅ |
+| 4 | 정밀도와 안정성 | 상보 필터, 재접속 identity 복구, 하트비트 | ✅ |
+| 5 | (선택) 확장 | WebRTC DataChannel, 두 번째 게임, 포인터 메뉴 | 미착수 |
 
 Phase 1의 Manual 검증에서 5.6 매핑표가 틀린 것으로 드러나면,
 `docs: confirm android sensor axis mapping` 커밋으로 이 문서를 먼저 고친 뒤 코드를 고친다.
@@ -577,6 +605,12 @@ Phase 1의 Manual 검증에서 5.6 매핑표가 틀린 것으로 드러나면,
 | D5 | 각 패키지는 `@phonemote/*` 스코프 패키지명 | 워크스페이스 참조 명확화 |
 | D6 | `noUncheckedIndexedAccess` 추가 | 바이너리 배열 인덱싱이 많음 |
 | D7 | `binary.ts` 는 `Float32Array` + `DataView(little-endian)` 로 명시 인코딩 | `Float32Array` 의 바이트 순서는 플랫폼 의존이므로 엔디안을 고정 |
+| D8 | TypeScript 5.9 고정 (최신은 7.0) | typescript-eslint가 TS 7.0에서 로드를 거부한다. `any` 금지를 lint로 강제하는 쪽이 최신 컴파일러보다 가치 있다 |
+| D9 | `vite.config.ts` 는 protocol을 상대 경로 + `.ts` 확장자로 import | Vite 설정은 TS 변환 전에 Node가 읽으므로 워크스페이스 `.ts` 엔트리를 해석하지 못한다. 포트 상수를 복제하는 대신 esbuild가 인라인하게 한다 |
+| D10 | `session.ts` 를 Scene의 유일한 창구로 | P4를 문서가 아니라 코드 구조와 lint로 강제하기 위해 |
+| D11 | 상보 필터 기본 켜짐, 단 DebugOverlay는 융합 전 값 표시 | 체감은 필터가 좋지만, 축 검증은 필터에 오염되면 안 된다 |
+| D12 | `throughput.ts` 를 서버 워크스페이스에 둠 | `ws` 의존성이 그 워크스페이스에만 있어 `scripts/` 에서는 해석되지 않는다 |
+| D13 | 스윙 판정은 헛스윙에 벌점을 주지 않음 | 타이밍 학습 중 불필요한 좌절을 만들지 않기 위해. 놓치면 실점이라는 결과로 충분하다 |
 
 ### 13.2 가정
 

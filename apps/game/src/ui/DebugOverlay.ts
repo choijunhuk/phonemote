@@ -75,6 +75,11 @@ export class DebugOverlay {
       `         z${pad(raw.acceleration.z, 2)}                 ` +
         `z${pad(canonical.acceleration.z, 2)}`,
       '',
+      info.fused
+        ? `fused    yaw${pad(info.fused.orientation.yaw)} pitch${pad(info.fused.orientation.pitch)}` +
+          ` roll${pad(info.fused.orientation.roll)}`
+        : 'fused    (off)',
+      '',
       `screen   ${raw.screenOrientation}   buttons ${raw.buttons}   seq ${raw.seq}`,
       `stream   ${info.hz.toFixed(1)} Hz   loss ${info.lossPercent.toFixed(2)}%`,
       `rtt      ${rtt}`,

@@ -1,4 +1,5 @@
 import { BUTTON, type ButtonName, type SensorFrame } from '@phonemote/protocol';
+import { ComplementaryFilter, type FusionOptions } from './ComplementaryFilter.js';
 import { normalize } from './SensorNormalizer.js';
 import { PointerMode, type PointerOptions } from './PointerMode.js';
 import { SwingDetector } from './SwingDetector.js';
@@ -18,6 +19,12 @@ export interface InputMapperConfig {
   readonly pointer?: PointerOptions | false;
   readonly swing?: boolean;
   readonly tilt?: TiltOptions | false;
+  /**
+   * Fuse gyro with gravity before the modes see the pose. On by default: it
+   * costs nothing and takes the shake out of tilt. The debug overlay keeps
+   * showing the unfused canonical values, so the axis check stays honest.
+   */
+  readonly fusion?: FusionOptions | false;
 }
 
 const BUTTON_ENTRIES = Object.entries(BUTTON) as ReadonlyArray<[ButtonName, number]>;
@@ -26,6 +33,8 @@ interface PlayerState {
   lastTimestamp: number | null;
   buttons: number;
   lastCanonical: CanonicalSensorFrame | null;
+  lastFused: CanonicalSensorFrame | null;
+  fusion: ComplementaryFilter | null;
   pointer: PointerMode | null;
   swing: SwingDetector | null;
   tilt: TiltMode | null;
@@ -45,6 +54,8 @@ export class InputMapper {
       lastTimestamp: null,
       buttons: 0,
       lastCanonical: null,
+      lastFused: null,
+      fusion: this.config.fusion === false ? null : new ComplementaryFilter(this.config.fusion),
       pointer:
         this.config.pointer === false || this.config.pointer === undefined
           ? null
@@ -74,6 +85,11 @@ export class InputMapper {
     return this.players.get(playerId)?.lastCanonical ?? null;
   }
 
+  /** The fused pose the modes actually consumed, when fusion is enabled. */
+  lastFused(playerId: number): CanonicalSensorFrame | null {
+    return this.players.get(playerId)?.lastFused ?? null;
+  }
+
   removePlayer(playerId: number): void {
     this.players.delete(playerId);
   }
@@ -83,6 +99,12 @@ export class InputMapper {
     const canonical = normalize(frame, state.lastTimestamp);
     state.lastTimestamp = frame.timestamp;
     state.lastCanonical = canonical;
+
+    // Modes read the fused pose; the raw canonical one is kept for the overlay.
+    const fused = state.fusion
+      ? { ...canonical, orientation: state.fusion.update(canonical) }
+      : canonical;
+    state.lastFused = fused;
 
     const actions: GameAction[] = [];
 
@@ -101,22 +123,22 @@ export class InputMapper {
     state.buttons = canonical.buttons;
 
     if (state.calibrationPending && state.tilt) {
-      state.tilt.calibrate(canonical);
+      state.tilt.calibrate(fused);
       state.calibrationPending = false;
     }
 
     if (state.pointer) {
-      const { x, y } = state.pointer.update(canonical);
+      const { x, y } = state.pointer.update(fused);
       actions.push({ kind: 'pointer_move', playerId: canonical.playerId, x, y });
     }
 
     if (state.tilt) {
-      const { x, y } = state.tilt.update(canonical);
+      const { x, y } = state.tilt.update(fused);
       actions.push({ kind: 'tilt', playerId: canonical.playerId, x, y });
     }
 
     if (state.swing) {
-      const swing = state.swing.update(canonical);
+      const swing = state.swing.update(fused);
       if (swing) actions.push({ kind: 'swing', ...swing });
     }
 
