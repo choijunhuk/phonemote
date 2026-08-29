@@ -34,7 +34,22 @@ for (const [label, value, good] of rows) {
   list.append(dt, dd);
 }
 
-app.append(heading, subtitle, list);
+// Phone-side setup aid: the same server hands out mkcert's root CA, so the
+// certificate warning can be fixed without moving files off the PC by hand.
+const caLink = document.createElement('a');
+caLink.href = '/rootCA.crt';
+caLink.textContent = '루트 CA 내려받기 (rootCA.crt)';
+caLink.style.color = 'var(--ok)';
+
+const caHint = document.createElement('p');
+caHint.style.color = 'var(--muted)';
+caHint.style.margin = '0';
+caHint.style.fontSize = '0.85rem';
+caHint.textContent =
+  '인증서 경고가 뜬다면: 위 파일을 받은 뒤 설정 > 보안 > 암호화 및 사용자 인증 정보 > ' +
+  '인증서 설치 > CA 인증서 에서 설치하세요.';
+
+app.append(heading, subtitle, list, caLink, caHint);
 
 // This file is loaded as an ES module; the empty export keeps TypeScript from
 // treating it as a global script.

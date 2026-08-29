@@ -6,8 +6,8 @@
 > **이 문서가 코드보다 먼저다.** 구조가 바뀌면 코드보다 이 문서를 먼저 고친다.
 > 특히 5장(좌표계)의 매핑표는 실기기 검증 결과로만 바뀌며, 코드에 임시 부호 반전을 넣지 않는다.
 
-- 상태: **Draft (Phase 0, 승인 대기)**
-- 최종 갱신: Phase 0
+- 상태: **Phase 0 반영됨** (Phase 1 착수 전)
+- 최종 갱신: Phase 0 종료 시점
 
 ---
 
@@ -496,12 +496,18 @@ type GameAction =
 `scripts/setup-certs.sh` 가 mkcert로 `localhost`, `127.0.0.1`, `<LAN-IP>` 를 SAN에 넣은
 인증서를 `certs/` 에 생성한다. `certs/` 는 커밋하지 않는다.
 
-Android에서 경고 없이 열려면 **폰에 mkcert 루트 CA를 설치**해야 한다 (README에 상세 절차):
-`mkcert -install` → `mkcert -CAROOT` 의 `rootCA.pem` 을 폰으로 전송 →
-설정 → 보안 → 암호화 및 사용자 인증 정보 → 인증서 설치 → **CA 인증서** (경로는 기기마다 다름) →
-`https://<LAN-IP>:5174` 접속 확인.
+Android에서 경고 없이 열려면 **폰에 mkcert 루트 CA를 설치**해야 한다. 클릭해서 경고를
+통과하면 페이지 자체는 열리고 `isSecureContext` 도 `true` 지만, **WSS 핸드셰이크에는
+우회 화면이 없어서** 센서 스트림이 그냥 실패한다. 즉 CA 설치는 선택이 아니다.
 
-> **미해결 R1**: 이 PC에 mkcert가 설치되어 있지 않다. → 13.3 Q1
+파일 전달을 쉽게 하려고 `setup-certs.sh` 가 루트 CA **공개 인증서만**
+`apps/controller/public/rootCA.crt` 로 복사하고, 컨트롤러 Vite 서버가 이를
+`application/x-x509-ca-cert` + `Content-Disposition: attachment` 로 내려준다.
+폰에서 `https://<LAN-IP>:5174/rootCA.crt` 를 열면 다운로드된다.
+개인키(`rootCA-key.pem`)는 절대 복사하지 않는다. 이 복사본도 gitignore 대상이다.
+
+설치는 반드시 **설정 → 보안 → 암호화 및 사용자 인증 정보 → 인증서 설치 → CA 인증서**
+경로로 한다(파일을 탭해서 여는 방식은 대개 실패한다). 상세 절차는 README 3장.
 
 ### 9.2 실행
 
@@ -580,12 +586,14 @@ Phase 1의 Manual 검증에서 5.6 매핑표가 틀린 것으로 드러나면,
 
 ### 13.3 미해결 질문 (Phase 0 구현 전 답이 필요)
 
-- **Q1 (mkcert)**: 이 PC에 mkcert가 없다. `winget install FiloSottile.mkcert` 로 설치해도 되나?
-  (대안: OpenSSL 3.5.7이 이미 있으므로 자체 CA 스크립트도 가능. 다만 폰에 루트 CA를 설치해야
-  하는 건 똑같고, mkcert 쪽 절차가 훨씬 짧다.)
+- ~~**Q1 (mkcert)**~~ → 해결. `winget install FiloSottile.mkcert` 로 1.4.4 설치, `mkcert -install` 완료.
 - **Q2 (GitHub 원격)**: 원격이 아직 없고 이 PC에 `gh` CLI도 없다. GitHub에서 빈 저장소를 만들어
   URL을 주면 `git remote add origin` 후 push한다. 그전까지는 로컬 커밋만 쌓는다.
 - **Q3 (screenOrientation 인코딩)**: idx 13을 스펙대로 `type` 열거값으로 둘지,
   `angle / 90` 으로 둘지. 일반 Android 폰에서는 두 값이 동일하다. 기본은 스펙대로 `type`.
-- **Q4 (pnpm)**: pnpm이 설치되어 있지 않다. Node에 동봉된 `corepack enable pnpm` 으로
-  활성화할 계획이다(전역 npm 설치보다 깔끔). 이대로 진행해도 되나?
+- ~~**Q4 (pnpm)**~~ → 해결. `corepack enable` 은 `C:\Program Files
+odejs` 쓰기 권한(EPERM)으로
+  실패해서 `npm install -g pnpm` 으로 설치했다 (11.24.0).
+- **R2 (TypeScript 버전)**: typescript-eslint 8.68이 TS 7.0에서 로드를 거부한다
+  (`Error: typescript-eslint does not support TS 7.0`). lint를 살리려고 TypeScript를 5.9로
+  고정했다. typescript-eslint가 TS 7을 지원하면 올린다.
