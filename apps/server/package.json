@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "cert-hosts": "tsx src/certHosts.ts"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
