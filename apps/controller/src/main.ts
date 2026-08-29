@@ -46,8 +46,9 @@ caHint.style.color = 'var(--muted)';
 caHint.style.margin = '0';
 caHint.style.fontSize = '0.85rem';
 caHint.textContent =
-  '인증서 경고가 뜬다면: 위 파일을 받은 뒤 설정 > 보안 > 암호화 및 사용자 인증 정보 > ' +
-  '인증서 설치 > CA 인증서 에서 설치하세요.';
+  '인증서 경고가 뜬다면: 위 파일을 받은 뒤 설정 앱에서 설치하세요. ' +
+  '설정 검색창에 "CA 인증서" > 인증서 설치 > CA 인증서 > 다운로드 폴더에서 선택. ' +
+  '다운로드한 파일을 직접 탭하면 Android가 설치를 거부합니다.';
 
 app.append(heading, subtitle, list, caLink, caHint);
 
