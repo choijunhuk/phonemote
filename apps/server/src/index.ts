@@ -1,14 +1,25 @@
 import { createServer } from 'node:https';
-import { PORTS } from '@phonemote/protocol';
+import { WebSocketServer, type RawData, type WebSocket } from 'ws';
+import {
+  PORTS,
+  isClientHello,
+  isFeedback,
+  isPing,
+  isPong,
+  parseMessage,
+  toArrayBuffer,
+  type ErrorCode,
+  type ServerMsg,
+} from '@phonemote/protocol';
 import { loadTlsMaterial, MissingCertificateError } from './https.js';
 import { resolveLanIp } from './lanIp.js';
+import { RoomRegistry, type Connection } from './room.js';
 
 /**
  * Relay server.
  *
- * Phase 0 scope: terminate HTTPS on the fixed port, resolve the LAN IP and
- * report it. Room routing and the WebSocket layer arrive in Phase 1 — this
- * process never interprets sensor packets (ARCHITECTURE.md P1).
+ * It routes; it does not interpret (ARCHITECTURE.md P1). Sensor frames are
+ * forwarded byte for byte without ever being decoded here.
  */
 
 function main(): void {
@@ -24,15 +35,110 @@ function main(): void {
   }
 
   const tls = loadTlsMaterial();
+  const registry = new RoomRegistry();
 
   const server = createServer({ cert: tls.cert, key: tls.key }, (req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, host: lan.host }));
+      res.end(JSON.stringify({ ok: true, host: lan.host, rooms: registry.size }));
       return;
     }
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('PhoneMote relay: WebSocket only\n');
+  });
+
+  const wss = new WebSocketServer({ server });
+
+  wss.on('connection', (socket: WebSocket) => {
+    const connection: Connection = {
+      send: (data) => {
+        if (socket.readyState !== socket.OPEN) return;
+        socket.send(data);
+      },
+      close: () => socket.close(),
+    };
+
+    const fail = (code: ErrorCode, message: string): void => {
+      connection.send(JSON.stringify({ type: 'error', code, message } satisfies ServerMsg));
+      socket.close();
+    };
+
+    socket.on('message', (data: RawData, isBinary: boolean) => {
+      if (isBinary) {
+        // A sensor frame. Hand it to the game socket unread.
+        const room = registry.findByController(connection);
+        if (!room) return;
+        room.toGame(toArrayBuffer(data as Buffer));
+        return;
+      }
+
+      const message = parseMessage(data.toString());
+      if (!message) {
+        fail('BAD_MESSAGE', 'Expected JSON with a "type" field.');
+        return;
+      }
+
+      if (isClientHello(message)) {
+        if (message.role === 'game') {
+          const room = registry.create(connection);
+          connection.send(
+            JSON.stringify({
+              type: 'room',
+              roomCode: room.code,
+              wsUrl: `wss://${lan.host}:${PORTS.relay}`,
+              controllerUrl: `https://${lan.host}:${PORTS.controller}/?room=${room.code}`,
+            } satisfies ServerMsg),
+          );
+          console.log(`[relay] room ${room.code} opened`);
+          return;
+        }
+
+        const room = registry.get(message.roomCode);
+        if (!room) {
+          fail('ROOM_NOT_FOUND', `No room with code ${message.roomCode}.`);
+          return;
+        }
+        const joined = room.addController(connection, message.name);
+        if (!joined.ok) {
+          fail(joined.code, 'That room already has four controllers.');
+          return;
+        }
+        console.log(`[relay] room ${room.code}: player ${joined.player.id} joined`);
+        return;
+      }
+
+      if (isPing(message) || isFeedback(message)) {
+        // Both travel game -> controller.
+        const room = registry.findByGame(connection);
+        room?.toPlayer(message.playerId, JSON.stringify(message));
+        return;
+      }
+
+      if (isPong(message)) {
+        const room = registry.findByController(connection);
+        room?.toGame(JSON.stringify(message));
+        return;
+      }
+    });
+
+    socket.on('close', () => {
+      const gameRoom = registry.findByGame(connection);
+      if (gameRoom) {
+        gameRoom.closeWithGameGone();
+        registry.remove(gameRoom.code);
+        console.log(`[relay] room ${gameRoom.code} closed (game left)`);
+        return;
+      }
+      const controllerRoom = registry.findByController(connection);
+      const player = controllerRoom?.removeController(connection);
+      if (controllerRoom && player) {
+        console.log(`[relay] room ${controllerRoom.code}: player ${player.id} left`);
+      }
+    });
+
+    socket.on('error', (error: Error) => {
+      console.warn(`[relay] socket error: ${error.message}`);
+    });
   });
 
   server.listen(PORTS.relay, '0.0.0.0', () => {
