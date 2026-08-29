@@ -7,6 +7,8 @@
  * arrive in Phase 1 and 2.
  */
 
+import { PORTS } from '@phonemote/protocol';
+
 const app = document.querySelector<HTMLElement>('#app');
 if (!app) throw new Error('#app is missing from index.html');
 
@@ -51,6 +53,29 @@ caHint.textContent =
   '다운로드한 파일을 직접 탭하면 Android가 설치를 거부합니다.';
 
 app.append(heading, subtitle, list, caLink, caHint);
+
+/**
+ * The certificate check that actually matters.
+ *
+ * A page warning can be clicked through; a TLS failure on a fetch or a
+ * WebSocket cannot. If this probe succeeds, the relay's certificate is trusted
+ * for real and Phase 1 sensor streaming will connect.
+ */
+const relayUrl = `https://${window.location.hostname}:${PORTS.relay}/health`;
+const relayRow = document.createElement('dd');
+const relayLabel = document.createElement('dt');
+relayLabel.textContent = 'relay TLS';
+relayRow.textContent = '확인 중…';
+list.append(relayLabel, relayRow);
+
+try {
+  await fetch(relayUrl, { mode: 'no-cors', signal: AbortSignal.timeout(4000) });
+  relayRow.textContent = 'ok — 인증서 신뢰됨';
+  relayRow.className = 'ok';
+} catch {
+  relayRow.textContent = '실패 — 릴레이 인증서가 신뢰되지 않음';
+  relayRow.className = 'bad';
+}
 
 // This file is loaded as an ES module; the empty export keeps TypeScript from
 // treating it as a global script.
