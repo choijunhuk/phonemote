@@ -67,17 +67,22 @@ export interface TraceListing {
   readonly bytes: number;
 }
 
-export function listTraces(): TraceListing[] {
+function listIn(directory: string, prefix: string): TraceListing[] {
   try {
-    return readdirSync(TRACE_DIR, { withFileTypes: true })
+    return readdirSync(directory, { withFileTypes: true })
       .filter((entry) => entry.isFile() && entry.name.endsWith(TRACE_EXTENSION))
       .map((entry) => ({
-        name: entry.name,
-        bytes: readFileSync(join(TRACE_DIR, entry.name)).byteLength,
+        name: `${prefix}${entry.name}`,
+        bytes: readFileSync(join(directory, entry.name)).byteLength,
       }));
   } catch {
     return [];
   }
+}
+
+/** Session recordings sit at the top; the committed corpus is one level down. */
+export function listTraces(): TraceListing[] {
+  return [...listIn(TRACE_DIR, ''), ...listIn(join(TRACE_DIR, 'corpus'), 'corpus/')];
 }
 
 /**
@@ -85,7 +90,11 @@ export function listTraces(): TraceListing[] {
  * joined blindly: this server is on a LAN with other people's devices on it.
  */
 export function readTrace(name: string): string | null {
-  if (!/^[A-Za-z0-9._-]+$/.test(name) || !name.endsWith(TRACE_EXTENSION)) return null;
+  // Only a bare filename, optionally inside corpus/. This server is on a LAN
+  // with other people's devices on it, so the path is checked rather than
+  // joined and hoped for.
+  if (!/^(corpus\/)?[A-Za-z0-9._-]+$/.test(name) || !name.endsWith(TRACE_EXTENSION)) return null;
+  if (name.includes('..')) return null;
   try {
     return readFileSync(join(TRACE_DIR, name), 'utf8');
   } catch {

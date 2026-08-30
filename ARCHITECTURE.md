@@ -96,6 +96,7 @@ Out of scope: iOS, Android Chrome 외 모바일 브라우저, 네이티브 앱, 
 │           ├── messages.ts        # JSON 제어 메시지 타입 + 타입 가드
 │           ├── frame.ts           # SensorFrame 타입
 │           ├── binary.ts          # encodeSensor / decodeSensor
+│           ├── trace.ts          # .pmtrace 포맷 (녹화/재생)
 │           ├── constants.ts       # 버튼 비트, 룸코드 문자셋, 포트, 색상, 필드 인덱스
 │           └── index.ts
 └── apps/
@@ -104,6 +105,8 @@ Out of scope: iOS, Android Chrome 외 모바일 브라우저, 네이티브 앱, 
     │   ├── room.ts                # Room / RoomRegistry / 재접속 유예
     │   ├── lanIp.ts
     │   ├── certHosts.ts           # 인증서 SAN 목록 출력 (setup-certs.sh용)
+    │   ├── recorder.ts            # --record 트레이스 기록 + /traces 서빙
+    │   ├── makeCorpus.ts          # 합성 트레이스 코퍼스 생성
     │   ├── throughput.ts          # 60Hz 파이프 측정 하네스 (개발 전용)
     │   └── https.ts               # 인증서 로드, 부재 시 친절한 에러
     ├── controller/src/            # 폰
@@ -117,6 +120,10 @@ Out of scope: iOS, Android Chrome 외 모바일 브라우저, 네이티브 앱, 
     └── game/src/                  # PC
         ├── main.ts                # Phaser 부트 + 씬 등록
         ├── session.ts             # 소켓 + 입력 파이프라인 ↔ Scene 경계
+        ├── games.ts               # 게임 레지스트리 (씬이 아니라 배선)
+        ├── dev/
+        │   ├── FakeController.ts  # 키보드 → raw 프레임 (?fake=1)
+        │   └── replay.ts          # 트레이스 재생 (?replay=이름)
         ├── net/
         │   ├── client.ts          # WSS, 메시지 → 이벤트
         │   └── latency.ts         # ping/pong RTT 통계
@@ -124,6 +131,7 @@ Out of scope: iOS, Android Chrome 외 모바일 브라우저, 네이티브 앱, 
         │   ├── types.ts           # CanonicalSensorFrame, GameAction
         │   ├── SensorNormalizer.ts
         │   ├── ComplementaryFilter.ts
+        │   ├── pose.ts            # 중력 방향 자세 판정
         │   ├── InputMapper.ts
         │   ├── PointerMode.ts
         │   ├── SwingDetector.ts
@@ -134,6 +142,7 @@ Out of scope: iOS, Android Chrome 외 모바일 브라우저, 네이티브 앱, 
         │   ├── CalibrationScene.ts
         │   └── games/
         │       ├── PointerTest.ts
+        │ FreezeFrame.ts
         │       ├── tennisState.ts  # 규칙 (Phaser 비의존, 단위 테스트 대상)
         │       └── Tennis.ts
         └── ui/
@@ -564,11 +573,19 @@ type GameAction =
 | `SwingDetector` | 1스윙=1이벤트, 쿨다운 무시, 임계 미만 무반응, strength 경계(15→0, 40→1, 50→1) | 2 |
 | Tennis 상태 머신 | Vitest (serve→rally→point→gameover, 벽치기 포함) | 3 |
 | P4 (Scene의 `SensorFrame` import 금지) | ESLint `@typescript-eslint/no-restricted-imports` | 3 |
+| **골든 트레이스** | `traces/corpus/*.pmtrace` 를 실제 파이프라인에 재생 | 확장 1단계 |
+| 센서 정지 | 가속도가 임계값 위에 얼어붙은 트레이스 → 스윙 0, 포인터 정지 | 확장 1~2단계 |
+| 중력 자세 (`up`) | 4개 자세의 벡터 부호 + roll 특이점 근방 안정성 | 확장 3단계 |
+| 게임 레지스트리 | 레지스트리 key == 씬 key (Phaser 모킹) | 확장 3단계 |
 | QR 라운드트립 | `qrcode` 로 렌더 → `jsqr` 로 디코딩 == `controllerUrl` | 2 |
 | 재접속 유예 | 주입한 시계로 10초 경계 검증 | 4 |
 | 상보 필터 | 스파이크 억제 / 수렴 / yaw 적분 / 스톨 후 리셋 | 4 |
 
-**실기기·사람의 체감·물리 센서가 필요한 항목은 자동 검증 대상이 아니다.** 각 Phase 보고에서
+**트레이스가 이 표의 절반을 실기기 없이 재현 가능하게 만든다.** 릴레이의 `--record` 로 실제
+세션을 기록하고 골든 테스트에 넣으면, 임계값 변경이 무엇을 얻고 무엇을 잃었는지 숫자로 나온다.
+합성 코퍼스는 그중 **음성 사례**(가만히 둔 폰, 걷는 폰, 죽은 센서)를 담당한다.
+
+**여전히 실기기·사람의 체감·물리 센서가 필요한 항목은 자동 검증 대상이 아니다.** 각 Phase 보고에서
 `Automated` / `Manual` 로 나누고, Manual 항목은 확인 절차를 함께 적는다.
 
 ---
@@ -671,6 +688,12 @@ Phase 1의 Manual 검증에서 5.6 매핑표가 틀린 것으로 드러나면,
 | D15 | 스윙을 피크 감쇠 시점에 즉시 발화 | 고정 100ms 대기는 모든 타격에 100ms 지연을 더한다. 타이밍 게임에서 치명적 |
 | D16 | 테니스 속도 0.55~1.5 → 0.32~0.8, 히트존 0.18 → 0.26 | 플레이 결과 타이밍 창이 사람이 반응할 수 있는 폭이 아니었다 |
 | D17 | 컨트롤러에 "잡는 방향" 선택 추가, 기본 가로 고정 | 회전 잠금 시 `screen.orientation` 이 거짓말을 하고 축이 뒤바뀐다 |
+| D18 | 전송을 rAF → `devicemotion` 이벤트 구동으로, 프레임 포맷 v2 | 캐시 재전송이 죽은 센서를 살아있는 dt로 적분하게 만들었다. 스트림 통계로는 절대 보이지 않는 종류의 버그다 |
+| D19 | `motionSeq` 로 센서 정지를 판정 (값 비교 휴리스틱 폐기) | 같은 값이 두 번 오는 것은 정상일 수 있지만, 같은 이벤트 카운터가 두 번 오는 것은 정지다 |
+| D20 | 버튼 유지용 10Hz keep-alive | 전송이 센서 구동이 되면서 센서가 멎으면 버튼까지 죽는 부작용이 생겼다 |
+| D21 | 중력 방향 `up` 을 canonical 1급 출력으로, 자세는 `pose` GameAction | 각도는 평평/수직에서 특이점이 있다. Scene이 프레임을 직접 보게 하는 대신 액션으로 올려 P4를 지켰다 |
+| D22 | 게임 레지스트리를 `scenes/` 밖에 배치 | 레지스트리는 씬이 아니라 배선이다. `scenes/` 안에 두면 P4 lint에 정당하게 걸린다 |
+| D23 | 트레이스 녹화를 릴레이에 배치 | 이미 모든 프레임을 보고, 해석하지 않고도 기록할 수 있으며, 폰 수정이 0이다 |
 
 ### 13.2 가정
 
