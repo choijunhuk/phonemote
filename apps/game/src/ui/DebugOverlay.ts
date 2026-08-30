@@ -97,6 +97,8 @@ export class DebugOverlay {
             `(${((performance.now() - info.lastSwing.at) / 1000).toFixed(1)}s 전)`
           : ''),
       `rtt      ${rtt}`,
+      '',
+      ...session.events.map((event, index) => `${index === 0 ? '기록  ' : '      '}   ${event}`),
     ].join('\n');
   }
 }

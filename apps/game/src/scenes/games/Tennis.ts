@@ -28,7 +28,7 @@ const MISS_TEXT = {
 
 export class Tennis extends Phaser.Scene {
   private state: TennisState = createTennis();
-  private readonly sideOf = new Map<number, Side>();
+  private lastPlayerCount = 0;
   private ball!: Phaser.GameObjects.Arc;
   private readonly rackets = new Map<Side, Phaser.GameObjects.Rectangle>();
   private scoreText!: Phaser.GameObjects.Text;
@@ -47,9 +47,7 @@ export class Tennis extends Phaser.Scene {
     session.configureInput({ swing: true });
 
     const players = session.players;
-    players.forEach((player, index) => {
-      if (index < 2) this.sideOf.set(player.id, (index + 1) as Side);
-    });
+    this.lastPlayerCount = players.length;
     this.state = createTennis({ players: players.length >= 2 ? 2 : 1 });
     this.lastPhase = this.state.phase;
 
@@ -57,20 +55,34 @@ export class Tennis extends Phaser.Scene {
 
     this.cleanup = session.onAction((action) => {
       if (action.kind === 'swing') {
-        const side = this.sideOf.get(action.playerId);
-        if (!side) return;
+        // Resolved per swing: a phone that joined after this scene started, or
+        // rejoined with a new id, would otherwise have every swing silently
+        // thrown away — which looks exactly like the swing never being seen.
+        const side = this.sideFor(action.playerId);
+        if (!side) {
+          session.log(`스윙 무시 P${action.playerId} (자리 없음)`);
+          return;
+        }
         const result = swing(this.state, side, action.strength, action.direction8);
         if (result.hit) {
           sfx.hit(action.strength);
           session.vibrate(action.playerId, [Math.round(25 + action.strength * 65)]);
           this.cameras.main.shake(90, 0.002 + action.strength * 0.004);
           this.showSwingFeedback('맞음', '#2ed573');
+          session.log(
+            `타격 P${side} 강도 ${action.strength.toFixed(2)} ${action.direction8} ` +
+              `→ 속도 ${this.state.ball.vx.toFixed(2)}`,
+          );
         } else {
           // The swing was seen; it just did not connect. Saying so is the
           // difference between bad timing and a controller that looks dead.
           sfx.whiff();
           session.vibrate(action.playerId, [15]);
           this.showSwingFeedback(MISS_TEXT[result.miss ?? 'late'], '#ffa502');
+          session.log(
+            `빗나감 P${side} ${result.miss ?? '?'} 공x ${this.state.ball.x.toFixed(2)} ` +
+              `속도 ${this.state.ball.vx.toFixed(2)}`,
+          );
         }
         return;
       }
@@ -85,21 +97,43 @@ export class Tennis extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.cleanup?.();
       this.cleanup = null;
-      this.sideOf.clear();
       this.rackets.clear();
     });
   }
 
   override update(_time: number, delta: number): void {
+    // A stutter or a backgrounded tab hands us a huge delta; integrating it
+    // whole would jump the ball across a side of the court and score a point
+    // nobody played.
+    const dt = Math.min(delta / 1000, 1 / 30);
+
+    // One phone cannot play two-player tennis: every ball that crosses would
+    // be an instant point, which reads as the game resetting itself.
+    if (session.players.length !== this.lastPlayerCount) {
+      session.log(`플레이어 ${this.lastPlayerCount} → ${session.players.length}, 재시작`);
+      this.scene.restart();
+      return;
+    }
+
     const before = this.state.ball.vx;
-    step(this.state, delta / 1000);
+    step(this.state, dt);
 
     // The wall in practice mode reverses the ball without anyone swinging.
     if (this.state.config.players === 1 && before > 0 && this.state.ball.vx < 0) sfx.wall();
 
     if (this.state.phase !== this.lastPhase) {
-      if (this.state.phase === 'point') sfx.point();
+      if (this.state.phase === 'point') {
+        sfx.point();
+        session.log(
+          this.state.config.players === 1
+            ? `놓침 ${this.state.misses}/${this.state.config.missesAllowed} (랠리 ${this.state.rally})`
+            : `득점 P${this.state.lastPointTo ?? '?'} → ${this.state.score[0]}:${this.state.score[1]}`,
+        );
+      }
       if (this.state.phase === 'gameover') sfx.win();
+      if (this.state.phase === 'rally' && this.lastPhase === 'serve') {
+        session.log(`서브 P${this.state.server} 속도 ${this.state.ball.vx.toFixed(2)}`);
+      }
       this.lastPhase = this.state.phase;
     }
 
@@ -176,6 +210,13 @@ export class Tennis extends Phaser.Scene {
         ? '연습 (벽치기) — 폰 1대'
         : `대전 — P1 vs P2 (폰 ${session.players.length}대)`,
     );
+  }
+
+  private sideFor(playerId: number): Side | null {
+    const index = session.players.findIndex((player) => player.id === playerId);
+    if (index === 0) return 1;
+    if (index === 1) return 2;
+    return null;
   }
 
   private showSwingFeedback(text: string, color: string): void {

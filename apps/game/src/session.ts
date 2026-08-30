@@ -72,6 +72,8 @@ export class GameSession {
   /** Whatever a scene is doing right now, for the debug overlay. */
   status = '';
   lastError: SessionError | null = null;
+  /** Newest first. Scenes append; the overlay prints. */
+  readonly events: string[] = [];
 
   get players(): readonly PlayerInfo[] {
     return [...this.playerMap.values()].sort((a, b) => a.id - b.id);
@@ -210,6 +212,11 @@ export class GameSession {
         }
       }
     }
+  }
+
+  log(message: string): void {
+    this.events.unshift(message);
+    if (this.events.length > 6) this.events.pop();
   }
 
   reportError(error: unknown): void {
