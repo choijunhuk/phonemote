@@ -48,6 +48,9 @@ export const sfx = {
   hit(strength: number): void {
     tone({ frequency: 420 + strength * 260, durationMs: 70, gain: 0.05 + strength * 0.04 });
   },
+  whiff(): void {
+    tone({ frequency: 180, durationMs: 90, type: 'sine', gain: 0.03, slideTo: 120 });
+  },
   wall(): void {
     tone({ frequency: 260, durationMs: 60, type: 'triangle' });
   },

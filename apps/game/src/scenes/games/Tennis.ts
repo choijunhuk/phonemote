@@ -20,6 +20,12 @@ import {
 
 const COURT_MARGIN = 0.08;
 
+const MISS_TEXT = {
+  early: '너무 빨랐음',
+  late: '너무 늦었음',
+  'not-your-turn': '상대 서브',
+} as const;
+
 export class Tennis extends Phaser.Scene {
   private state: TennisState = createTennis();
   private readonly sideOf = new Map<number, Side>();
@@ -29,6 +35,8 @@ export class Tennis extends Phaser.Scene {
   private phaseText!: Phaser.GameObjects.Text;
   private rallyText!: Phaser.GameObjects.Text;
   private lastPhase: TennisState['phase'] = 'serve';
+  private swingFeedback!: Phaser.GameObjects.Text;
+  private modeText!: Phaser.GameObjects.Text;
   private cleanup: (() => void) | null = null;
 
   constructor() {
@@ -56,6 +64,13 @@ export class Tennis extends Phaser.Scene {
           sfx.hit(action.strength);
           session.vibrate(action.playerId, [Math.round(25 + action.strength * 65)]);
           this.cameras.main.shake(90, 0.002 + action.strength * 0.004);
+          this.showSwingFeedback('맞음', '#2ed573');
+        } else {
+          // The swing was seen; it just did not connect. Saying so is the
+          // difference between bad timing and a controller that looks dead.
+          sfx.whiff();
+          session.vibrate(action.playerId, [15]);
+          this.showSwingFeedback(MISS_TEXT[result.miss ?? 'late'], '#ffa502');
         }
         return;
       }
@@ -139,6 +154,34 @@ export class Tennis extends Phaser.Scene {
         color: '#98a0b3',
       })
       .setOrigin(0.5, 1);
+
+    this.swingFeedback = this.add
+      .text(width / 2, this.scale.height * 0.68, '', {
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: '32px',
+        color: '#ffa502',
+      })
+      .setOrigin(0.5)
+      .setAlpha(0);
+
+    this.modeText = this.add
+      .text(18, 18, '', {
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: '18px',
+        color: '#98a0b3',
+      })
+      .setOrigin(0, 0);
+    this.modeText.setText(
+      this.state.config.players === 1
+        ? '연습 (벽치기) — 폰 1대'
+        : `대전 — P1 vs P2 (폰 ${session.players.length}대)`,
+    );
+  }
+
+  private showSwingFeedback(text: string, color: string): void {
+    this.swingFeedback.setText(text).setColor(color).setAlpha(1);
+    this.tweens.killTweensOf(this.swingFeedback);
+    this.tweens.add({ targets: this.swingFeedback, alpha: 0, duration: 700, delay: 250 });
   }
 
   private courtX(normalised: number): number {

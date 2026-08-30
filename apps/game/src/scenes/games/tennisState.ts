@@ -47,7 +47,7 @@ export interface TennisState {
  * court in well under a second and the hit window was a fraction of that,
  * which is not a timing game so much as a coin toss.
  */
-export const HIT_ZONE = 0.26;
+export const HIT_ZONE = 0.32;
 export const BASE_SPEED = 0.32;
 export const MAX_SPEED = 0.8;
 const POINT_PAUSE_SECONDS = 1.2;
@@ -114,9 +114,17 @@ function awardPoint(state: TennisState, to: Side): void {
   state.rally = 0;
 }
 
+/**
+ * Why a swing did nothing. A silent miss is indistinguishable from a swing the
+ * detector never saw, which is the difference between "my timing is off" and
+ * "this thing is broken".
+ */
+export type SwingMiss = 'early' | 'late' | 'not-your-turn';
+
 export interface SwingResult {
   readonly hit: boolean;
   readonly served: boolean;
+  readonly miss: SwingMiss | null;
 }
 
 export function swing(
@@ -128,27 +136,30 @@ export function swing(
   const vertical = VERTICAL_BY_DIRECTION[direction];
 
   if (state.phase === 'serve') {
-    if (side !== state.server) return { hit: false, served: false };
+    if (side !== state.server) return { hit: false, served: false, miss: 'not-your-turn' };
     const toward = state.server === 1 ? 1 : -1;
     state.ball = { ...serveSpot(state), vx: toward * speedFor(strength), vy: vertical };
     state.phase = 'rally';
     state.rally = 1;
     state.serveWait = 0;
-    return { hit: true, served: true };
+    return { hit: true, served: true, miss: null };
   }
 
-  if (state.phase !== 'rally') return { hit: false, served: false };
+  if (state.phase !== 'rally') return { hit: false, served: false, miss: null };
 
   const approachingLeft = state.ball.vx < 0 && state.ball.x <= HIT_ZONE;
   const approachingRight = state.ball.vx > 0 && state.ball.x >= 1 - HIT_ZONE;
   const inZone = side === 1 ? approachingLeft : approachingRight;
-  if (!inZone) return { hit: false, served: false };
+  if (!inZone) {
+    const approaching = side === 1 ? state.ball.vx < 0 : state.ball.vx > 0;
+    return { hit: false, served: false, miss: approaching ? 'early' : 'late' };
+  }
 
   const toward = side === 1 ? 1 : -1;
   state.ball.vx = toward * speedFor(strength);
   state.ball.vy = vertical;
   state.rally++;
-  return { hit: true, served: false };
+  return { hit: true, served: false, miss: null };
 }
 
 export function step(state: TennisState, dt: number): void {
@@ -186,9 +197,10 @@ export function step(state: TennisState, dt: number): void {
   }
 
   if (state.config.players === 1 && state.ball.x >= 1) {
-    // The wall always returns the ball, at the same speed.
+    // The wall returns the ball a little softer than it arrived, so a hard
+    // shot does not immediately become an impossible return.
     state.ball.x = 2 - state.ball.x;
-    state.ball.vx = -Math.abs(state.ball.vx);
+    state.ball.vx = -Math.abs(state.ball.vx) * 0.85;
     return;
   }
 

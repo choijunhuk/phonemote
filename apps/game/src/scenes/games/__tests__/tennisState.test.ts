@@ -154,6 +154,34 @@ describe('finishing', () => {
   });
 });
 
+describe('telling the player why a swing missed', () => {
+  it('says early when the ball has not arrived yet', () => {
+    const state = createTennis();
+    swing(state, 1, 1, 'E');
+    runUntil(state, (current) => current.ball.x > 0.6);
+    // Player 2 swinging while the ball is still crossing the court.
+    const result = swing(state, 2, 1, 'E');
+    expect(result).toMatchObject({ hit: false, miss: 'early' });
+  });
+
+  it('says late once the ball is heading away again', () => {
+    const state = createTennis();
+    swing(state, 1, 1, 'E');
+    const result = swing(state, 1, 1, 'E');
+    expect(result).toMatchObject({ hit: false, miss: 'late' });
+  });
+
+  it('says whose serve it is', () => {
+    const state = createTennis();
+    expect(swing(state, 2, 1, 'E')).toMatchObject({ hit: false, miss: 'not-your-turn' });
+  });
+
+  it('reports no miss when the swing connects', () => {
+    const state = createTennis();
+    expect(swing(state, 1, 1, 'E')).toMatchObject({ hit: true, miss: null });
+  });
+});
+
 describe('never getting stuck', () => {
   it('serves on its own if nobody swings', () => {
     const state = createTennis();
