@@ -15,6 +15,7 @@ import {
 import { loadTlsMaterial, MissingCertificateError } from './https.js';
 import { resolveLanIp } from './lanIp.js';
 import { RoomRegistry, type Connection } from './room.js';
+import { TraceRecorder, listTraces, readTrace } from './recorder.js';
 
 /**
  * Relay server.
@@ -25,6 +26,14 @@ import { RoomRegistry, type Connection } from './room.js';
 
 function main(): void {
   const lan = resolveLanIp();
+
+  // Recording is opt-in: it writes every frame of every player to disk.
+  const recordFlag = process.argv.indexOf('--record');
+  const recorder =
+    recordFlag === -1
+      ? null
+      : new TraceRecorder(process.argv[recordFlag + 1] ?? 'unlabelled session');
+  if (recorder) console.log('[relay] recording traces to traces/');
 
   if (lan.candidates.length > 1 && lan.source === 'auto') {
     console.warn('[relay] several LAN IP candidates found:');
@@ -41,14 +50,45 @@ function main(): void {
   const server = createServer({ cert: tls.cert, key: tls.key }, (req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, host: lan.host, rooms: registry.size }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          host: lan.host,
+          rooms: registry.size,
+          recording: recorder?.stats ?? null,
+        }),
+      );
+      return;
+    }
+
+    // The game runs in a browser and cannot read the traces directory itself.
+    if (req.url === '/traces') {
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'access-control-allow-origin': '*',
+      });
+      res.end(JSON.stringify(listTraces()));
+      return;
+    }
+    if (req.url?.startsWith('/traces/')) {
+      const trace = readTrace(decodeURIComponent(req.url.slice('/traces/'.length)));
+      if (trace === null) {
+        res.writeHead(404, { 'content-type': 'text/plain' });
+        res.end('no such trace');
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': 'text/plain',
+        'access-control-allow-origin': '*',
+      });
+      res.end(trace);
       return;
     }
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('PhoneMote relay: WebSocket only\n');
   });
 
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ server, perMessageDeflate: false });
 
   /**
    * A phone that loses Wi-Fi leaves a socket that looks open from here and
@@ -69,6 +109,11 @@ function main(): void {
 
   wss.on('connection', (socket: WebSocket) => {
     alive.add(socket);
+    // Small frames at 60 Hz are exactly the traffic Nagle punishes, and
+    // compressing 68 bytes is pure latency for no gain. The underlying socket
+    // is not part of the ws type surface, hence the narrow cast.
+    const raw = (socket as unknown as { _socket?: { setNoDelay(on: boolean): void } })._socket;
+    raw?.setNoDelay(true);
     socket.on('pong', () => alive.add(socket));
     const connection: Connection = {
       send: (data) => {
@@ -91,7 +136,11 @@ function main(): void {
         // A sensor frame. Hand it to the game socket unread.
         const room = registry.findByController(connection);
         if (!room) return;
-        room.toGame(toArrayBuffer(data as Buffer));
+        const frame = toArrayBuffer(data as Buffer);
+        // Written down before forwarding, and still never interpreted here.
+        const player = room.findPlayerByConnection(connection);
+        if (recorder && player) recorder.record(room.code, player.id, frame);
+        room.toGame(frame);
         return;
       }
 

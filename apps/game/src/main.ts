@@ -21,6 +21,23 @@ session.start();
 const overlay = new DebugOverlay();
 overlay.start();
 
+// Development stand-ins. Both push frames through the real pipeline rather
+// than faking GameActions, so the game can be played, and a change felt,
+// without a phone in the room.
+const params = new URLSearchParams(window.location.search);
+const fake = params.get('fake');
+if (fake !== null) {
+  void import('./dev/FakeController.js').then((module) => {
+    module.startFakeControllers(Number(fake) || 1);
+  });
+}
+const replayName = params.get('replay');
+if (replayName !== null) {
+  void import('./dev/replay.js')
+    .then((module) => module.startReplay(replayName))
+    .catch((error: unknown) => session.reportError(error));
+}
+
 new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'app',

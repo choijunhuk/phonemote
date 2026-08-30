@@ -40,3 +40,7 @@ desktop.ini
 apps/controller/public/rootCA.crt
 
 apps/controller/public/rootCA-der.crt
+
+# recorded sessions are throwaway; the committed corpus under traces/corpus is not
+traces/*
+!traces/corpus/

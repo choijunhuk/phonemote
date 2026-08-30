@@ -93,12 +93,7 @@ export class GameSession {
         this.connected = true;
         this.emitPlayers();
       },
-      onPlayerJoin: (player) => {
-        this.playerMap.set(player.id, player);
-        this.latency.set(player.id, new LatencyTracker());
-        this.quality.set(player.id, new StreamQuality());
-        this.emitPlayers();
-      },
+      onPlayerJoin: (player) => this.registerPlayer(player),
       onPlayerLeave: (playerId) => {
         this.playerMap.delete(playerId);
         this.latency.delete(playerId);
@@ -128,6 +123,26 @@ export class GameSession {
         this.client?.ping(player, id);
       }
     }, PING_INTERVAL_MS);
+  }
+
+  private registerPlayer(player: PlayerInfo): void {
+    this.playerMap.set(player.id, player);
+    this.latency.set(player.id, new LatencyTracker());
+    this.quality.set(player.id, new StreamQuality());
+    this.emitPlayers();
+  }
+
+  /**
+   * Development entry points: a keyboard stand-in and a recorded trace both
+   * push frames through the very same pipeline the network uses, so what they
+   * exercise is the real thing rather than a parallel implementation.
+   */
+  addLocalPlayer(player: PlayerInfo): void {
+    this.registerPlayer(player);
+  }
+
+  injectFrame(frame: SensorFrame): void {
+    this.handleFrame(frame);
   }
 
   /** Each scene declares the input modes it wants. */
