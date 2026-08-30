@@ -386,7 +386,7 @@ type Feedback = { type: 'vibrate'; playerId: number; pattern: number[] };
   서버가 준 값을 그대로 QR로 만든다.** 룸코드 직접 입력 경로도 같은 URL 형식으로 수렴한다.
 - 플레이어 색상은 서버가 슬롯 순서대로 고정 배정: `#FF4757`, `#3742FA`, `#2ED573`, `#FFA502`.
 
-### 6.2 센서 패킷 — 바이너리 (`Float32Array(14)`, 56 byte, little-endian)
+### 6.2 센서 패킷 — 바이너리 (`Float32Array(17)`, 68 byte, little-endian)
 
 | idx | 필드 | 단위 / 비고 |
 |---|---|---|
@@ -398,11 +398,27 @@ type Feedback = { type: 'vibrate'; playerId: number; pattern: number[] };
 | 9~11 | `acceleration.x/y/z` | m/s², 중력 제외, raw |
 | 12 | `buttons` | 비트마스크 |
 | 13 | `screenOrientation` | 0~3 (5.5 표) |
+| 14 | `version` | 프레임 포맷 버전. 현재 2 |
+| 15 | `motionSeq` | `devicemotion` 이벤트 카운터. **센서 정지 감지의 근거** |
+| 16 | `flags` | 비트마스크. `LINEAR_ACCEL=1`(중력 제외 가속도 사용 가능), `ROTATION_RATE=2`, `ORIENTATION=4`, `HOLD_OVERRIDE=8` |
+
+**v2에서 바뀐 것과 이유**
+
+- `timestamp`(idx 2)는 이제 **송신 시각이 아니라 `DeviceMotionEvent.timeStamp`** 다. 폰은
+  rAF가 아니라 `devicemotion` 이벤트에서 전송한다. 예전 방식은 센서가 멎어도 캐시값을 60Hz로
+  재전송하면서 타임스탬프만 계속 전진시켰고, PC는 **죽은 각속도를 살아있는 dt로 적분**했다
+  (500ms 스톨 = 화면폭 0.42의 유령 이동). 두 값 모두 `performance.now()` 원점이라 폰 안에서는
+  비교 가능하고, 기기 간 비교 금지 규칙은 그대로다.
+- `motionSeq`가 값-동일성 추측을 대체한다. 같은 값이 두 번 오는 것은 정상일 수 있지만
+  같은 `motionSeq`가 두 번 오는 것은 정지다.
+- `flags`는 기기가 무엇을 실제로 제공하는지 알린다. 중력 제외 가속도가 없는 기기에서
+  스윙이 영영 감지되지 않는 상황을 **조용히 실패하는 대신 표시**하기 위한 것이다.
 
 버튼 비트: `A=1, B=2, TRIGGER=4, MINUS=8, PLUS=16, HOME=32`.
 
 `binary.ts` API: `encodeSensor(frame: SensorFrame): ArrayBuffer`,
-`decodeSensor(buf: ArrayBuffer): SensorFrame`.
+`decodeSensor(buf: ArrayBuffer): SensorFrame`. 디코더는 **68 byte(v2)와 56 byte(v1)를 모두**
+받는다. v1은 녹화된 트레이스를 계속 읽기 위한 것이며, 없는 필드는 기본값으로 채운다.
 라운드트립 테스트 필수(Float32 정밀도 허용오차 사용).
 센서값이 `null` 인 경우(초기 프레임 등)는 `0` 으로 인코딩한다.
 

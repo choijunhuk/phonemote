@@ -1,4 +1,11 @@
-import { SCREEN_ORIENTATION, type EulerAngles, type ScreenOrientationValue, type Vector3 } from '@phonemote/protocol';
+import {
+  SCREEN_ORIENTATION,
+  SENSOR_FLAG,
+  SENSOR_MAX_SEND_HZ,
+  type EulerAngles,
+  type ScreenOrientationValue,
+  type Vector3,
+} from '@phonemote/protocol';
 
 /**
  * Raw sensor capture (ARCHITECTURE.md 7.2).
@@ -7,6 +14,11 @@ import { SCREEN_ORIENTATION, type EulerAngles, type ScreenOrientationValue, type
  * smoothing, no axis correction, no idea what the game is. The PC decides what
  * any of it means.
  *
+ * Frames are emitted from the devicemotion event rather than from a rAF loop.
+ * Sending on rAF meant a phone whose sensors had stalled kept shipping its
+ * cached reading with a fresh timestamp, and the PC integrated dead angular
+ * velocity against live dt.
+ *
  * Target is Android Chrome only, so there is no iOS permission branch here.
  */
 
@@ -14,10 +26,20 @@ export interface SensorSnapshot {
   readonly orientation: EulerAngles;
   readonly rotationRate: EulerAngles;
   readonly acceleration: Vector3;
+  /** The event's own timestamp, on the phone's performance.now() origin. */
+  readonly timestamp: number;
+  /** Counts devicemotion events; the ground truth for "is the sensor alive". */
+  readonly motionSeq: number;
   /** What is sent on the wire, after any hold override. */
   readonly screenOrientation: ScreenOrientationValue;
   /** What the browser actually reported, for the debug readout. */
   readonly reportedOrientation: ScreenOrientationValue;
+  readonly flags: number;
+}
+
+export interface SupportReport {
+  readonly supported: boolean;
+  readonly missing: readonly string[];
 }
 
 /**
@@ -32,13 +54,9 @@ export interface SensorSnapshot {
  */
 export type HoldMode = 'auto' | 'landscape' | 'portrait';
 
-export interface SupportReport {
-  readonly supported: boolean;
-  readonly missing: readonly string[];
-}
-
 const ZERO_ANGLES: EulerAngles = { alpha: 0, beta: 0, gamma: 0 };
 const ZERO_VECTOR: Vector3 = { x: 0, y: 0, z: 0 };
+const MIN_SEND_INTERVAL_MS = 1000 / SENSOR_MAX_SEND_HZ;
 
 export function checkSupport(): SupportReport {
   const missing: string[] = [];
@@ -63,12 +81,15 @@ export class SensorSource {
   private acceleration: Vector3 = ZERO_VECTOR;
   private started = false;
 
-  /** Set once either event has been seen, so the UI can say "no data yet". */
-  private seenMotion = false;
-  private seenOrientation = false;
+  private motionSeq = 0;
+  private lastEventTimestamp = 0;
+  private lastEventAtMs = 0;
+  private lastEmitAt = Number.NEGATIVE_INFINITY;
+  private capabilities = 0;
+  private listener: ((snapshot: SensorSnapshot) => void) | null = null;
 
   private readonly onOrientation = (event: DeviceOrientationEvent): void => {
-    this.seenOrientation = true;
+    this.capabilities |= SENSOR_FLAG.ORIENTATION;
     this.orientation = {
       alpha: event.alpha ?? 0,
       beta: event.beta ?? 0,
@@ -77,27 +98,56 @@ export class SensorSource {
   };
 
   private readonly onMotion = (event: DeviceMotionEvent): void => {
-    this.seenMotion = true;
+    this.motionSeq++;
+    // The event's own clock, not the moment we got round to sending.
+    this.lastEventTimestamp = event.timeStamp;
+    this.lastEventAtMs = performance.now();
+
     const rate = event.rotationRate;
-    if (rate) {
+    if (rate && (rate.alpha !== null || rate.beta !== null || rate.gamma !== null)) {
+      this.capabilities |= SENSOR_FLAG.ROTATION_RATE;
       this.rotationRate = { alpha: rate.alpha ?? 0, beta: rate.beta ?? 0, gamma: rate.gamma ?? 0 };
     }
+
     const acceleration = event.acceleration;
-    if (acceleration) {
+    if (acceleration && (acceleration.x !== null || acceleration.y !== null)) {
+      // Some devices report no gravity-excluded acceleration at all. Saying so
+      // is better than a swing detector that silently never fires.
+      this.capabilities |= SENSOR_FLAG.LINEAR_ACCEL;
       this.acceleration = {
         x: acceleration.x ?? 0,
         y: acceleration.y ?? 0,
         z: acceleration.z ?? 0,
       };
     }
+
+    const now = performance.now();
+    if (now - this.lastEmitAt < MIN_SEND_INTERVAL_MS) return;
+    this.lastEmitAt = now;
+    this.listener?.(this.read());
   };
+
+  /** Called once per devicemotion event, capped at SENSOR_MAX_SEND_HZ. */
+  onFrame(listener: (snapshot: SensorSnapshot) => void): void {
+    this.listener = listener;
+  }
 
   setHoldMode(mode: HoldMode): void {
     this.holdMode = mode;
   }
 
   get isReceiving(): boolean {
-    return this.seenMotion && this.seenOrientation;
+    const needed = SENSOR_FLAG.ORIENTATION | SENSOR_FLAG.ROTATION_RATE;
+    return (this.capabilities & needed) === needed;
+  }
+
+  get eventCount(): number {
+    return this.motionSeq;
+  }
+
+  /** performance.now() of the last devicemotion event, for stall detection. */
+  get lastEventAt(): number {
+    return this.lastEventAtMs;
   }
 
   start(): void {
@@ -114,6 +164,13 @@ export class SensorSource {
     window.removeEventListener('devicemotion', this.onMotion);
   }
 
+  /** Re-attaches the listeners; Android sometimes stops delivering after a
+   * spell in the background and a fresh registration brings them back. */
+  restart(): void {
+    this.stop();
+    this.start();
+  }
+
   read(): SensorSnapshot {
     const reported = screenOrientationValue();
     const applied: ScreenOrientationValue =
@@ -122,8 +179,12 @@ export class SensorSource {
       orientation: this.orientation,
       rotationRate: this.rotationRate,
       acceleration: this.acceleration,
+      timestamp: this.lastEventTimestamp,
+      motionSeq: this.motionSeq,
       screenOrientation: applied,
       reportedOrientation: reported,
+      flags:
+        this.capabilities | (this.holdMode === 'auto' ? 0 : SENSOR_FLAG.HOLD_OVERRIDE),
     };
   }
 }

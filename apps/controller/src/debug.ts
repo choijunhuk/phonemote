@@ -14,7 +14,12 @@ function fixed(value: number, digits = 1): string {
   return value.toFixed(digits).padStart(7);
 }
 
-export function formatSnapshot(snapshot: SensorSnapshot, sent: number, hz: number): string {
+export function formatSnapshot(
+  snapshot: SensorSnapshot,
+  sent: number,
+  dropped: number,
+  hz: number,
+): string {
   const { orientation, rotationRate, acceleration, screenOrientation } = snapshot;
   return [
     `orient  a${fixed(orientation.alpha)} b${fixed(orientation.beta)} g${fixed(orientation.gamma)}`,
@@ -22,6 +27,7 @@ export function formatSnapshot(snapshot: SensorSnapshot, sent: number, hz: numbe
     `accel   x${fixed(acceleration.x, 2)} y${fixed(acceleration.y, 2)} z${fixed(acceleration.z, 2)}`,
     `screen  보냄 ${ORIENTATION_NAMES[screenOrientation] ?? '?'}(${screenOrientation})` +
       `  폰보고 ${ORIENTATION_NAMES[snapshot.reportedOrientation] ?? '?'}(${snapshot.reportedOrientation})`,
-    `sent    ${sent} frames @ ${hz.toFixed(0)} Hz`,
+    `sent    ${sent} frames @ ${hz.toFixed(0)} Hz   버림 ${dropped}`,
+    `event   motionSeq ${snapshot.motionSeq}   flags ${snapshot.flags}`,
   ].join('\n');
 }

@@ -1,6 +1,8 @@
 import { WebSocket } from 'ws';
 import {
   PORTS,
+  SENSOR_FLAG,
+  SENSOR_FRAME_VERSION,
   decodeSensor,
   encodeSensor,
   parseMessage,
@@ -45,6 +47,9 @@ function frame(playerId: number, seq: number): SensorFrame {
     acceleration: { x: 0.1, y: 0.2, z: 0.3 },
     buttons: seq % 120 < 5 ? 1 : 0,
     screenOrientation: 1,
+    version: SENSOR_FRAME_VERSION,
+    motionSeq: seq,
+    flags: SENSOR_FLAG.LINEAR_ACCEL | SENSOR_FLAG.ROTATION_RATE | SENSOR_FLAG.ORIENTATION,
   };
 }
 

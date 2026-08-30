@@ -24,6 +24,13 @@ export interface PointerPosition {
 export const DEFAULT_POINTER_SENSITIVITY = 1 / 60;
 export const DEFAULT_POINTER_DEADZONE = 2;
 
+/**
+ * Longest step the integrator will honour. The first frame after a stall
+ * carries the whole gap in its dt, and integrating that at the rate the phone
+ * happened to be turning teleports the cursor.
+ */
+export const MAX_POINTER_STEP_SECONDS = 0.05;
+
 const CENTRE: PointerPosition = { x: 0.5, y: 0.5 };
 
 function clamp01(value: number): number {
@@ -57,12 +64,13 @@ export class PointerMode {
   update(frame: CanonicalSensorFrame): PointerPosition {
     if (frame.dt <= 0) return this.position;
 
+    const dt = Math.min(frame.dt, MAX_POINTER_STEP_SECONDS);
     const yaw = this.applyDeadzone(frame.angularVelocity.yaw);
     const pitch = this.applyDeadzone(frame.angularVelocity.pitch);
 
-    this.x = clamp01(this.x + yaw * frame.dt * this.sensitivity);
+    this.x = clamp01(this.x + yaw * dt * this.sensitivity);
     // Screen y grows downwards, aiming up must move the cursor up.
-    this.y = clamp01(this.y - pitch * frame.dt * this.sensitivity);
+    this.y = clamp01(this.y - pitch * dt * this.sensitivity);
     return this.position;
   }
 }

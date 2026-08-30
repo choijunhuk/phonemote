@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { ScreenOrientationValue, SensorFrame } from '@phonemote/protocol';
+import {
+  SENSOR_FLAG,
+  SENSOR_FRAME_VERSION,
+  type ScreenOrientationValue,
+  type SensorFrame,
+} from '@phonemote/protocol';
 import { normalize, orientationToCanonical, rotateAboutZ } from '../SensorNormalizer.js';
 
 /**
@@ -17,6 +22,9 @@ function frameWith(overrides: Partial<SensorFrame> = {}): SensorFrame {
     acceleration: { x: 0, y: 0, z: 0 },
     buttons: 0,
     screenOrientation: 1,
+    version: SENSOR_FRAME_VERSION,
+    motionSeq: 0,
+    flags: SENSOR_FLAG.LINEAR_ACCEL | SENSOR_FLAG.ROTATION_RATE | SENSOR_FLAG.ORIENTATION,
     ...overrides,
   };
 }

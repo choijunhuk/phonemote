@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { BUTTON, type SensorFrame } from '@phonemote/protocol';
+import {
+  BUTTON,
+  SENSOR_FLAG,
+  SENSOR_FRAME_VERSION,
+  type SensorFrame,
+} from '@phonemote/protocol';
 import { InputMapper } from '../InputMapper.js';
 import type { GameAction } from '../types.js';
 
+/** Every frame from a live phone carries a new motion event counter. */
+let motionSeq = 0;
+
 function raw(overrides: Partial<SensorFrame> = {}): SensorFrame {
+  motionSeq++;
   return {
     playerId: 1,
     seq: 0,
@@ -13,6 +22,9 @@ function raw(overrides: Partial<SensorFrame> = {}): SensorFrame {
     acceleration: { x: 0, y: 0, z: 0 },
     buttons: 0,
     screenOrientation: 1,
+    version: SENSOR_FRAME_VERSION,
+    motionSeq,
+    flags: SENSOR_FLAG.LINEAR_ACCEL | SENSOR_FLAG.ROTATION_RATE | SENSOR_FLAG.ORIENTATION,
     ...overrides,
   };
 }
@@ -114,8 +126,94 @@ describe('modes', () => {
     expect(before[0]?.kind === 'tilt' && before[0].x).toBeGreaterThan(0.3);
 
     mapper.requestCalibration(1);
-    const after = mapper.update({ ...tilted, timestamp: 16 });
+    // A new reading, not a repeat: a stalled frame would be frozen, not centred.
+    const after = mapper.update({ ...tilted, timestamp: 16, motionSeq: tilted.motionSeq + 1 });
     expect(after[0]?.kind === 'tilt' && after[0].x).toBe(0);
+  });
+});
+
+describe('a stalled sensor', () => {
+  it('freezes the modes but still reports buttons', () => {
+    const mapper = new InputMapper({ pointer: {}, tilt: {}, swing: true });
+    mapper.update(raw({ timestamp: 0 }));
+    const moving = mapper.update(
+      raw({ timestamp: 16, rotationRate: { alpha: 0, beta: -60, gamma: 0 } }),
+    );
+    const before = moving.find((action) => action.kind === 'pointer_move');
+    expect(before?.kind === 'pointer_move' && before.x).toBeGreaterThan(0.5);
+
+    // The phone keeps sending, but its sensors have stopped: same motionSeq.
+    const frozen = mapper.update({
+      ...raw({ timestamp: 200, rotationRate: { alpha: 0, beta: -60, gamma: 0 } }),
+      motionSeq: mapper.inputState(1).motionSeq,
+    });
+
+    expect(mapper.inputState(1).sensorStalled).toBe(true);
+    expect(frozen.some((action) => action.kind === 'pointer_move')).toBe(false);
+    expect(frozen.some((action) => action.kind === 'tilt')).toBe(false);
+  });
+
+  it('lets a button through while the sensor is stalled', () => {
+    const mapper = new InputMapper({ pointer: {} });
+    mapper.update(raw());
+    const stalledSeq = mapper.inputState(1).motionSeq;
+
+    const actions = mapper.update({ ...raw({ buttons: BUTTON.A }), motionSeq: stalledSeq });
+    expect(actions).toEqual([{ kind: 'button_down', playerId: 1, button: 'A' }]);
+  });
+
+  it('emits no phantom swing from a frozen acceleration above the threshold', () => {
+    const mapper = new InputMapper({ swing: true });
+    const held = { x: 0, y: 0, z: -60 };
+    mapper.update(raw({ timestamp: 0, acceleration: held }));
+    const stuckSeq = mapper.inputState(1).motionSeq;
+
+    // 5 seconds of a phone insisting it is being swung, without a new reading.
+    for (let t = 16; t < 5000; t += 16) {
+      const actions = mapper.update({
+        ...raw({ timestamp: t, acceleration: held }),
+        motionSeq: stuckSeq,
+      });
+      expect(actions.some((action) => action.kind === 'swing')).toBe(false);
+    }
+  });
+
+  it('picks up again once the sensor resumes', () => {
+    const mapper = new InputMapper({ tilt: {} });
+    mapper.update(raw({ timestamp: 0 }));
+    const stalledSeq = mapper.inputState(1).motionSeq;
+    mapper.update({ ...raw({ timestamp: 100 }), motionSeq: stalledSeq });
+    expect(mapper.inputState(1).sensorStalled).toBe(true);
+
+    const resumed = mapper.update(raw({ timestamp: 200 }));
+    expect(mapper.inputState(1).sensorStalled).toBe(false);
+    expect(resumed.some((action) => action.kind === 'tilt')).toBe(true);
+  });
+});
+
+describe('changing modes between scenes', () => {
+  it('keeps the tilt calibration', () => {
+    const mapper = new InputMapper({ tilt: {} });
+    const tilted = raw({ orientation: { alpha: 90, beta: 20, gamma: -90 } });
+    mapper.update(tilted);
+    mapper.requestCalibration(1);
+    mapper.update({ ...tilted, motionSeq: motionSeq + 1, timestamp: 16 });
+
+    // The next scene wants swings as well; the calibration must survive it.
+    mapper.setConfig({ tilt: {}, swing: true });
+    const after = mapper.update({ ...tilted, motionSeq: motionSeq + 2, timestamp: 32 });
+    const tilt = after.find((action) => action.kind === 'tilt');
+    expect(tilt?.kind === 'tilt' && tilt.x).toBe(0);
+  });
+
+  it('drops a mode the new scene does not want', () => {
+    const mapper = new InputMapper({ pointer: {}, tilt: {} });
+    mapper.update(raw());
+    mapper.setConfig({ swing: true });
+
+    const actions = mapper.update(raw({ timestamp: 16 }));
+    expect(actions.some((action) => action.kind === 'pointer_move')).toBe(false);
+    expect(actions.some((action) => action.kind === 'tilt')).toBe(false);
   });
 });
 

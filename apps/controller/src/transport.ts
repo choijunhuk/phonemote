@@ -1,11 +1,18 @@
-import { parseMessage, type Feedback, type ServerMsg } from '@phonemote/protocol';
+import {
+  PORTS,
+  SENSOR_FRAME_BYTES,
+  parseMessage,
+  type Feedback,
+  type ServerMsg,
+} from '@phonemote/protocol';
 
 /**
  * The phone's link to the relay (ARCHITECTURE.md 7.2).
  *
  * Reconnects on its own every second, because a phone screen going off or a
- * Wi-Fi hiccup should not end the session. Until Phase 4 a reconnect rejoins
- * as a new player.
+ * Wi-Fi hiccup should not end the session — but only while there is something
+ * to reconnect to. A room that no longer exists is a dead end, and retrying it
+ * forever left the phone stuck on a screen it could not leave.
  */
 
 export type ConnectionState = 'idle' | 'connecting' | 'joined' | 'reconnecting' | 'failed';
@@ -15,11 +22,19 @@ export interface TransportHandlers {
   onJoined(playerId: number, color: string): void;
   /** Everything the phone still cares about: errors and haptics. */
   onServerMessage(message: ServerMsg | Feedback): void;
+  /** The room is gone for good; the player has to pick a new one. */
+  onGiveUp(reason: string): void;
 }
 
 const RECONNECT_DELAY_MS = 1000;
-/** Drop frames rather than queue them: a stale frame is worse than no frame. */
-const MAX_BUFFERED_BYTES = 4096;
+/**
+ * Three frames. The old 4096 was 73 frames — over a second of backlog that the
+ * player would feel as lag long before anything was dropped.
+ */
+const MAX_BUFFERED_BYTES = SENSOR_FRAME_BYTES * 3;
+
+/** Errors that mean "stop trying", as opposed to "try again in a second". */
+const TERMINAL_ERRORS = new Set(['ROOM_NOT_FOUND', 'ROOM_FULL', 'GAME_LEFT']);
 
 export class Transport {
   private socket: WebSocket | null = null;
@@ -28,11 +43,11 @@ export class Transport {
   private playerId: number | null = null;
 
   constructor(
-    private readonly url: string,
     private readonly roomCode: string,
     private readonly handlers: TransportHandlers,
     private readonly name?: string,
     private readonly clientId?: string,
+    private readonly url = `wss://${window.location.hostname}:${PORTS.relay}`,
   ) {}
 
   get currentPlayerId(): number | null {
@@ -78,6 +93,10 @@ export class Transport {
         socket.send(JSON.stringify({ ...message, type: 'pong' }));
         return;
       }
+      if (message.type === 'error' && TERMINAL_ERRORS.has(message.code)) {
+        this.giveUp(message.message);
+        return;
+      }
       this.handlers.onServerMessage(message as ServerMsg | Feedback);
     });
 
@@ -91,6 +110,12 @@ export class Transport {
     socket.addEventListener('error', () => {
       // 'close' always follows; reconnection is handled there.
     });
+  }
+
+  private giveUp(reason: string): void {
+    this.close();
+    this.handlers.onState('failed', reason);
+    this.handlers.onGiveUp(reason);
   }
 
   private scheduleReconnect(): void {

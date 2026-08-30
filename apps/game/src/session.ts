@@ -61,9 +61,14 @@ export class GameSession {
   private readonly lastSwings = new Map<number, SwingRecord>();
   private readonly lastTilt = new Map<number, { x: number; y: number }>();
   private readonly sensorChangedAt = new Map<number, number>();
+  private readonly stalledSince = new Map<number, number>();
   private readonly accelHistory = new Map<number, Array<{ at: number; magnitude: number }>>();
 
-  private mapper = new InputMapper();
+  /**
+   * One mapper for the life of the session. Rebuilding it per scene threw away
+   * the calibration the previous scene had just taken.
+   */
+  private readonly mapper = new InputMapper();
   private client: GameClient | null = null;
   private pingId = 0;
 
@@ -125,9 +130,9 @@ export class GameSession {
     }, PING_INTERVAL_MS);
   }
 
-  /** Each scene declares the input modes it wants; state does not leak across. */
+  /** Each scene declares the input modes it wants. */
   configureInput(config: InputMapperConfig): void {
-    this.mapper = new InputMapper(config);
+    this.mapper.setConfig(config);
   }
 
   requestCalibration(playerId: number): void {
@@ -174,8 +179,13 @@ export class GameSession {
   private handleFrame(frame: SensorFrame): void {
     const now = performance.now();
     const previous = this.rawFrames.get(frame.playerId);
-    if (!previous || !sameReading(previous, frame)) {
+    // motionSeq is the phone's own event counter, so this is a fact rather than
+    // the guess that comparing values for equality used to make.
+    if (!previous || previous.motionSeq !== frame.motionSeq) {
       this.sensorChangedAt.set(frame.playerId, now);
+      this.stalledSince.delete(frame.playerId);
+    } else if (!this.stalledSince.has(frame.playerId)) {
+      this.stalledSince.set(frame.playerId, now);
     }
 
     const magnitude = Math.hypot(
@@ -229,21 +239,6 @@ export class GameSession {
     const snapshot = this.players;
     for (const listener of this.playersListeners) listener(snapshot);
   }
-}
-
-/** Identical sensor values mean the phone is resending a cached reading. */
-function sameReading(a: SensorFrame, b: SensorFrame): boolean {
-  return (
-    a.orientation.alpha === b.orientation.alpha &&
-    a.orientation.beta === b.orientation.beta &&
-    a.orientation.gamma === b.orientation.gamma &&
-    a.acceleration.x === b.acceleration.x &&
-    a.acceleration.y === b.acceleration.y &&
-    a.acceleration.z === b.acceleration.z &&
-    a.rotationRate.alpha === b.rotationRate.alpha &&
-    a.rotationRate.beta === b.rotationRate.beta &&
-    a.rotationRate.gamma === b.rotationRate.gamma
-  );
 }
 
 /** One session per page; scenes import this rather than passing it around. */

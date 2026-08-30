@@ -53,6 +53,14 @@ export class ControllerUi {
   private readonly holdControl = document.createElement('div');
 
   private buttons = 0;
+  /**
+   * Buttons pressed and released between two frames would vanish entirely if
+   * only the level were sampled, and a dropped frame widens that window from
+   * one sensor tick to however long the drop lasted.
+   */
+  private latched = 0;
+  private joinHandler: ((request: JoinRequest) => void) | null = null;
+  private prefilledRoom = '';
   private holdMode: HoldMode = 'landscape';
   private onHoldChange: ((mode: HoldMode) => void) | null = null;
 
@@ -74,9 +82,14 @@ export class ControllerUi {
     this.buildPad();
   }
 
-  /** Current button bitmask, read once per frame by the sender. */
-  get buttonMask(): number {
-    return this.buttons;
+  /**
+   * The mask to send: everything held right now, plus anything pressed since
+   * the last frame even if it has already been let go.
+   */
+  takeButtonMask(): number {
+    const mask = this.buttons | this.latched;
+    this.latched = 0;
+    return mask;
   }
 
   /**
@@ -117,7 +130,19 @@ export class ControllerUi {
     return row;
   }
 
+  /** The room is gone; put the player back where they can pick another. */
+  showJoinAgain(reason: string): void {
+    this.padSection.classList.add('hidden');
+    this.holdControl.classList.add('hidden');
+    this.joinSection.classList.remove('hidden');
+    this.setStatus('failed', reason);
+    if (this.joinHandler) this.showJoinForm(this.prefilledRoom, this.joinHandler);
+  }
+
   showJoinForm(prefilledRoom: string, onJoin: (request: JoinRequest) => void): void {
+    this.joinHandler = onJoin;
+    this.prefilledRoom = prefilledRoom;
+    this.joinSection.classList.remove('hidden');
     const title = document.createElement('h1');
     title.textContent = 'PhoneMote';
 
@@ -207,6 +232,7 @@ export class ControllerUi {
         event.preventDefault();
         button.setPointerCapture(event.pointerId);
         this.buttons |= bit;
+        this.latched |= bit;
         button.classList.add('down');
       };
       const release = (event: PointerEvent): void => {

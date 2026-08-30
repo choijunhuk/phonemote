@@ -1,8 +1,14 @@
-import { SENSOR_FIELD, SENSOR_FRAME_BYTES, SENSOR_FRAME_FIELDS } from './constants.js';
+import {
+  SENSOR_FIELD,
+  SENSOR_FRAME_BYTES,
+  SENSOR_FRAME_BYTES_V1,
+  SENSOR_FRAME_FIELDS,
+  SENSOR_FRAME_VERSION,
+} from './constants.js';
 import { isScreenOrientationValue, type SensorFrame } from './frame.js';
 
 /**
- * Sensor frames go over the wire as 14 little-endian float32 values
+ * Sensor frames go over the wire as little-endian float32 values
  * (ARCHITECTURE.md 6.2).
  *
  * Endianness is written out explicitly with DataView: the byte order of a
@@ -36,6 +42,9 @@ export function encodeSensor(frame: SensorFrame): ArrayBuffer {
   put(SENSOR_FIELD.accelerationZ, frame.acceleration.z);
   put(SENSOR_FIELD.buttons, frame.buttons);
   put(SENSOR_FIELD.screenOrientation, frame.screenOrientation);
+  put(SENSOR_FIELD.version, SENSOR_FRAME_VERSION);
+  put(SENSOR_FIELD.motionSeq, frame.motionSeq);
+  put(SENSOR_FIELD.flags, frame.flags);
 
   return buffer;
 }
@@ -47,11 +56,17 @@ export class MalformedSensorFrameError extends Error {
   }
 }
 
+/**
+ * Accepts v2 (68 byte) and v1 (56 byte) frames. v1 exists so traces recorded
+ * before the format grew stay readable; its missing fields take defaults that
+ * say "this frame cannot tell you".
+ */
 export function decodeSensor(buffer: ArrayBuffer): SensorFrame {
-  if (buffer.byteLength !== SENSOR_FRAME_BYTES) {
+  const isV1 = buffer.byteLength === SENSOR_FRAME_BYTES_V1;
+  if (!isV1 && buffer.byteLength !== SENSOR_FRAME_BYTES) {
     throw new MalformedSensorFrameError(
-      `Sensor frame must be ${SENSOR_FRAME_BYTES} bytes (${SENSOR_FRAME_FIELDS} float32), ` +
-        `got ${buffer.byteLength}`,
+      `Sensor frame must be ${SENSOR_FRAME_BYTES} bytes (${SENSOR_FRAME_FIELDS} float32) ` +
+        `or ${SENSOR_FRAME_BYTES_V1} for v1, got ${buffer.byteLength}`,
     );
   }
 
@@ -63,11 +78,13 @@ export function decodeSensor(buffer: ArrayBuffer): SensorFrame {
     throw new MalformedSensorFrameError(`Unknown screen orientation value: ${screenOrientation}`);
   }
 
+  const seq = Math.round(get(SENSOR_FIELD.seq));
+
   return {
     // Integer-valued fields travel as floats; round them back so downstream
     // code can compare and bit-test them safely.
     playerId: Math.round(get(SENSOR_FIELD.playerId)),
-    seq: Math.round(get(SENSOR_FIELD.seq)),
+    seq,
     timestamp: get(SENSOR_FIELD.timestamp),
     orientation: {
       alpha: get(SENSOR_FIELD.orientationAlpha),
@@ -86,6 +103,12 @@ export function decodeSensor(buffer: ArrayBuffer): SensorFrame {
     },
     buttons: Math.round(get(SENSOR_FIELD.buttons)),
     screenOrientation,
+    version: isV1 ? 1 : Math.round(get(SENSOR_FIELD.version)),
+    // A v1 frame has no event counter. Falling back to seq keeps stall
+    // detection monotonic, at the cost of never detecting a stall in old
+    // recordings — which is honest: v1 could not see one either.
+    motionSeq: isV1 ? seq : Math.round(get(SENSOR_FIELD.motionSeq)),
+    flags: isV1 ? 0 : Math.round(get(SENSOR_FIELD.flags)),
   };
 }
 

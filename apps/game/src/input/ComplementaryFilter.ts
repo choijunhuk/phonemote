@@ -41,6 +41,7 @@ export class ComplementaryFilter {
   private pitch: number | null = null;
   private roll: number | null = null;
   private yaw = 0;
+  private last: CanonicalAngles = { yaw: 0, pitch: 0, roll: 0 };
 
   constructor(options: FusionOptions = {}) {
     this.gyroWeight = options.gyroWeight ?? DEFAULT_GYRO_WEIGHT;
@@ -51,17 +52,25 @@ export class ComplementaryFilter {
     this.pitch = null;
     this.roll = null;
     this.yaw = 0;
+    this.last = { yaw: 0, pitch: 0, roll: 0 };
   }
 
   update(frame: CanonicalSensorFrame): CanonicalAngles {
     const { orientation, angularVelocity, dt } = frame;
+
+    // No elapsed time means a repeat of a frame already folded in. Holding the
+    // pose is right; resetting would snap to the raw gravity reading and wipe
+    // the yaw total, quietly turning the filter off exactly when the stream
+    // gets noisy. The very first frame is exempt: it has no pose to hold.
+    if (dt === 0 && this.pitch !== null && this.roll !== null) return this.last;
 
     const stalled = dt <= 0 || dt > this.maxGapSeconds;
     if (stalled || this.pitch === null || this.roll === null) {
       this.pitch = orientation.pitch;
       this.roll = orientation.roll;
       if (stalled) this.yaw = 0;
-      return { yaw: this.yaw, pitch: this.pitch, roll: this.roll };
+      this.last = { yaw: this.yaw, pitch: this.pitch, roll: this.roll };
+      return this.last;
     }
 
     const gyroPitch = this.pitch + angularVelocity.pitch * dt;
@@ -73,6 +82,7 @@ export class ComplementaryFilter {
     this.roll = gyroRoll + correction * angleDifference(gyroRoll, orientation.roll);
     this.yaw += angularVelocity.yaw * dt;
 
-    return { yaw: this.yaw, pitch: this.pitch, roll: this.roll };
+    this.last = { yaw: this.yaw, pitch: this.pitch, roll: this.roll };
+    return this.last;
   }
 }

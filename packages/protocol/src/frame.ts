@@ -26,7 +26,12 @@ export interface SensorFrame {
   readonly playerId: number;
   /** Increments per sent frame; gaps mean packet loss. */
   readonly seq: number;
-  /** Phone performance.now(), in ms. Only ever compared with itself. */
+  /**
+   * DeviceMotionEvent.timeStamp, in ms on the phone's performance.now() origin.
+   * Only ever compared with itself. Crucially this is the time the sensor
+   * fired, not the time the frame was sent, so a stalled sensor stops
+   * advancing it instead of feeding live dt to dead values.
+   */
   readonly timestamp: number;
   readonly orientation: EulerAngles;
   /** deg/s about the device axes. */
@@ -35,6 +40,12 @@ export interface SensorFrame {
   readonly acceleration: Vector3;
   readonly buttons: number;
   readonly screenOrientation: ScreenOrientationValue;
+  /** Frame format version (ARCHITECTURE.md 6.2). */
+  readonly version: number;
+  /** devicemotion event counter: the ground truth for "is the sensor alive". */
+  readonly motionSeq: number;
+  /** SENSOR_FLAG bitmask describing what this device actually provides. */
+  readonly flags: number;
 }
 
 export function isScreenOrientationValue(value: number): value is ScreenOrientationValue {

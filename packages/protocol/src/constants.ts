@@ -50,9 +50,14 @@ export const SCREEN_ORIENTATION = {
 /** Rotation angle in degrees for each screen orientation enum value. */
 export const SCREEN_ORIENTATION_ANGLE = [0, 90, 180, 270] as const;
 
-/** Sensor frame layout: 14 float32 values, little-endian (ARCHITECTURE.md 6.2). */
-export const SENSOR_FRAME_FIELDS = 14;
+/** Sensor frame layout: little-endian float32 (ARCHITECTURE.md 6.2). */
+export const SENSOR_FRAME_VERSION = 2;
+export const SENSOR_FRAME_FIELDS = 17;
 export const SENSOR_FRAME_BYTES = SENSOR_FRAME_FIELDS * 4;
+
+/** v1 frames still exist in recorded traces and decode with defaults. */
+export const SENSOR_FRAME_FIELDS_V1 = 14;
+export const SENSOR_FRAME_BYTES_V1 = SENSOR_FRAME_FIELDS_V1 * 4;
 
 export const SENSOR_FIELD = {
   playerId: 0,
@@ -69,10 +74,33 @@ export const SENSOR_FIELD = {
   accelerationZ: 11,
   buttons: 12,
   screenOrientation: 13,
+  version: 14,
+  motionSeq: 15,
+  flags: 16,
 } as const;
 
-/** Phones send at most this often (ARCHITECTURE.md 7.2). */
-export const SENSOR_SEND_HZ = 60;
+/**
+ * What the phone can actually supply. A device with no gravity-excluded
+ * acceleration can never trigger a swing, and that has to be visible rather
+ * than looking like a detector that simply never fires.
+ */
+export const SENSOR_FLAG = {
+  LINEAR_ACCEL: 1,
+  ROTATION_RATE: 2,
+  ORIENTATION: 4,
+  /** The player declared the hold direction instead of trusting the OS. */
+  HOLD_OVERRIDE: 8,
+} as const;
+
+/**
+ * Frames are sent from the devicemotion event, so the phone's sensor decides
+ * the rate. This cap only exists to stop a 120 Hz device from doubling the
+ * traffic for nothing.
+ */
+export const SENSOR_MAX_SEND_HZ = 100;
+
+/** A sensor that has not ticked in this long is treated as stalled. */
+export const SENSOR_STALL_MS = 150;
 
 /**
  * A controller that disappears keeps its slot this long, so a Wi-Fi blip or a

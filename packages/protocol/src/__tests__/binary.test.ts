@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { BUTTON, SENSOR_FRAME_BYTES } from '../constants.js';
+import {
+  BUTTON,
+  SENSOR_FLAG,
+  SENSOR_FRAME_BYTES,
+  SENSOR_FRAME_BYTES_V1,
+  SENSOR_FRAME_VERSION,
+} from '../constants.js';
 import { decodeSensor, encodeSensor, MalformedSensorFrameError } from '../binary.js';
 import type { ScreenOrientationValue, SensorFrame } from '../frame.js';
 
@@ -23,6 +29,9 @@ function makeFrame(overrides: Partial<SensorFrame> = {}): SensorFrame {
     acceleration: { x: 1.5, y: -9.25, z: 0.125 },
     buttons: BUTTON.A | BUTTON.TRIGGER,
     screenOrientation: 1,
+    version: SENSOR_FRAME_VERSION,
+    motionSeq: 4242,
+    flags: SENSOR_FLAG.LINEAR_ACCEL | SENSOR_FLAG.ROTATION_RATE | SENSOR_FLAG.ORIENTATION,
     ...overrides,
   };
 }
@@ -32,6 +41,8 @@ function expectFrameEqual(actual: SensorFrame, expected: SensorFrame): void {
   expect(actual.seq).toBe(expected.seq);
   expect(actual.buttons).toBe(expected.buttons);
   expect(actual.screenOrientation).toBe(expected.screenOrientation);
+  expect(actual.motionSeq).toBe(expected.motionSeq);
+  expect(actual.flags).toBe(expected.flags);
   expectFloat32Equal(actual.timestamp, expected.timestamp);
   for (const axis of ['alpha', 'beta', 'gamma'] as const) {
     expectFloat32Equal(actual.orientation[axis], expected.orientation[axis]);
@@ -43,9 +54,26 @@ function expectFrameEqual(actual: SensorFrame, expected: SensorFrame): void {
 }
 
 describe('sensor frame codec', () => {
-  it('encodes to exactly 56 bytes', () => {
+  it('encodes to exactly 68 bytes', () => {
     expect(encodeSensor(makeFrame()).byteLength).toBe(SENSOR_FRAME_BYTES);
-    expect(SENSOR_FRAME_BYTES).toBe(56);
+    expect(SENSOR_FRAME_BYTES).toBe(68);
+  });
+
+  it('stamps the current format version', () => {
+    expect(decodeSensor(encodeSensor(makeFrame())).version).toBe(SENSOR_FRAME_VERSION);
+  });
+
+  it('still decodes a v1 frame from an old recording', () => {
+    // Same layout, truncated: the fields v1 never had take honest defaults.
+    const v2 = encodeSensor(makeFrame({ seq: 99 }));
+    const v1 = v2.slice(0, SENSOR_FRAME_BYTES_V1);
+
+    const decoded = decodeSensor(v1);
+    expect(decoded.version).toBe(1);
+    expect(decoded.seq).toBe(99);
+    expect(decoded.flags).toBe(0);
+    // No event counter existed, so it cannot claim to detect a stall.
+    expect(decoded.motionSeq).toBe(99);
   });
 
   it('round-trips a frame', () => {
@@ -103,6 +131,7 @@ describe('sensor frame codec', () => {
 
   it('rejects a buffer of the wrong size', () => {
     expect(() => decodeSensor(new ArrayBuffer(55))).toThrow(MalformedSensorFrameError);
+    expect(() => decodeSensor(new ArrayBuffer(64))).toThrow(MalformedSensorFrameError);
     expect(() => decodeSensor(new ArrayBuffer(0))).toThrow(MalformedSensorFrameError);
   });
 
