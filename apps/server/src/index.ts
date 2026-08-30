@@ -3,6 +3,7 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import {
   HEARTBEAT_INTERVAL_MS,
   PORTS,
+  SENSOR_FRAME_BYTES,
   isClientHello,
   isFeedback,
   isPing,
@@ -121,6 +122,9 @@ function main(): void {
         socket.send(data);
       },
       close: () => socket.close(),
+      get bufferedAmount() {
+        return socket.bufferedAmount;
+      },
     };
 
     const fail = (code: ErrorCode, message: string): void => {
@@ -140,7 +144,7 @@ function main(): void {
         // Written down before forwarding, and still never interpreted here.
         const player = room.findPlayerByConnection(connection);
         if (recorder && player) recorder.record(room.code, player.id, frame);
-        room.toGame(frame);
+        room.toGameLossy(frame, SENSOR_FRAME_BYTES * 3);
         return;
       }
 

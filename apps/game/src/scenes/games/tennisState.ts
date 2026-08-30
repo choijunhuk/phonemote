@@ -56,7 +56,10 @@ export const AUTO_SERVE_SECONDS = 3;
 
 export const DEFAULT_CONFIG: TennisConfig = { players: 2, pointsToWin: 5, missesAllowed: 3 };
 
-/** Vertical component each swing direction adds, in court units per second. */
+/** Fastest the ball climbs or dips, in court units per second. */
+const MAX_VERTICAL = 0.55;
+
+/** Fallback for callers with only the bucket. */
 const VERTICAL_BY_DIRECTION: Record<Direction8, number> = {
   N: -0.55,
   NE: -0.35,
@@ -121,6 +124,26 @@ function awardPoint(state: TennisState, to: Side): void {
  */
 export type SwingMiss = 'early' | 'late' | 'not-your-turn';
 
+/**
+ * How much the ball is aimed up or down.
+ *
+ * The eight-way bucket is coarse enough that E and W both mean "flat", so a
+ * swing between two sectors snapped to no aim at all. When the caller has the
+ * swing vector, its own vertical share is used instead, which makes aiming
+ * continuous rather than a choice between eight answers.
+ */
+export function verticalFor(
+  direction: Direction8,
+  vector?: { readonly x: number; readonly y: number; readonly z: number },
+): number {
+  if (!vector) return VERTICAL_BY_DIRECTION[direction];
+  const planar = Math.hypot(vector.x, vector.y);
+  if (planar < 1e-6) return VERTICAL_BY_DIRECTION[direction];
+  // Canonical +Y is up; the court's y grows towards the near edge, so a swing
+  // that lifts the ball has to reduce it.
+  return -(vector.y / planar) * MAX_VERTICAL;
+}
+
 export interface SwingResult {
   readonly hit: boolean;
   readonly served: boolean;
@@ -132,8 +155,10 @@ export function swing(
   side: Side,
   strength: number,
   direction: Direction8,
+  /** The swing's own direction, when the caller has it. */
+  vector?: { readonly x: number; readonly y: number; readonly z: number },
 ): SwingResult {
-  const vertical = VERTICAL_BY_DIRECTION[direction];
+  const vertical = verticalFor(direction, vector);
 
   if (state.phase === 'serve') {
     if (side !== state.server) return { hit: false, served: false, miss: 'not-your-turn' };

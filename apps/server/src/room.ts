@@ -19,6 +19,8 @@ import {
 export interface Connection {
   send(data: string | ArrayBuffer): void;
   close(): void;
+  /** Bytes queued but not yet written; absent on test doubles. */
+  readonly bufferedAmount?: number;
 }
 
 export interface Player {
@@ -99,6 +101,23 @@ export class Room {
   addController(connection: Connection, name?: string, clientId?: string): JoinResult {
     this.pruneReservations();
 
+    // A phone retries every second; the server only learns a socket is dead on
+    // its own schedule. Without this the returning phone takes a second slot
+    // while its own zombie still holds the first, and the game sees the player
+    // count change under it.
+    if (clientId !== undefined) {
+      const zombie = this.listPlayers().find((player) => player.clientId === clientId);
+      if (zombie) {
+        this.players.delete(zombie.id);
+        zombie.connection.close();
+        this.reserved.set(clientId, {
+          playerId: zombie.id,
+          name: zombie.name,
+          expiresAt: this.now() + REJOIN_GRACE_MS,
+        });
+      }
+    }
+
     const reservation = clientId === undefined ? undefined : this.reserved.get(clientId);
     const resumed = reservation !== undefined && !this.players.has(reservation.playerId);
     const id = resumed ? reservation.playerId : this.nextFreeSlot(clientId);
@@ -161,6 +180,17 @@ export class Room {
 
   toGame(data: string | ArrayBuffer): void {
     this.game.send(data);
+  }
+
+  /**
+   * Sensor frames only. A game socket that has fallen behind is better served
+   * by the next frame than by a queue of stale ones — but control messages are
+   * never dropped, since a missed player_join does not come round again.
+   */
+  toGameLossy(frame: ArrayBuffer, maxBufferedBytes: number): boolean {
+    if ((this.game.bufferedAmount ?? 0) > maxBufferedBytes) return false;
+    this.game.send(frame);
+    return true;
   }
 
   toPlayer(playerId: number, data: string | ArrayBuffer): boolean {

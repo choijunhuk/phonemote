@@ -70,6 +70,35 @@ describe('serving', () => {
   });
 });
 
+describe('aiming', () => {
+  it('reads the vertical aim from the swing vector, not the eight-way bucket', () => {
+    // Between two sectors: the bucket says E, which means flat, while the
+    // vector plainly slopes upwards.
+    const state = createTennis();
+    swing(state, 1, 1, 'E', { x: 1, y: 0.9, z: 0 });
+    expect(state.ball.vy).toBeLessThan(-0.2);
+  });
+
+  it('falls back to the bucket when no vector is given', () => {
+    const state = createTennis();
+    swing(state, 1, 1, 'N');
+    expect(state.ball.vy).toBeLessThan(0);
+  });
+
+  it('treats a purely sideways swing as flat', () => {
+    const state = createTennis();
+    swing(state, 1, 1, 'E', { x: 1, y: 0, z: -0.5 });
+    expect(state.ball.vy).toBeCloseTo(0, 6);
+  });
+
+  it('ignores a vector with no horizontal content at all', () => {
+    const state = createTennis();
+    swing(state, 1, 1, 'S', { x: 0, y: 0, z: -1 });
+    // Nothing to read, so the bucket decides.
+    expect(state.ball.vy).toBeGreaterThan(0);
+  });
+});
+
 describe('rallying', () => {
   it('returns the ball when the swing lands in the hit zone', () => {
     const state = createTennis();

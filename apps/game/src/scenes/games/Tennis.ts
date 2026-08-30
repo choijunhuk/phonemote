@@ -63,7 +63,13 @@ export class Tennis extends Phaser.Scene {
           session.log(`스윙 무시 P${action.playerId} (자리 없음)`);
           return;
         }
-        const result = swing(this.state, side, action.strength, action.direction8);
+        const result = swing(
+          this.state,
+          side,
+          action.strength,
+          action.direction8,
+          action.direction,
+        );
         if (result.hit) {
           sfx.hit(action.strength);
           session.vibrate(action.playerId, [Math.round(25 + action.strength * 65)]);

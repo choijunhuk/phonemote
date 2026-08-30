@@ -14,7 +14,15 @@ export interface LatencyStats {
   readonly reportable: boolean;
 }
 
-export const MIN_REPORTABLE_SAMPLES = 100;
+/**
+ * At one ping a second, a hundred samples means no RTT figure for the first
+ * hundred seconds — longer than most playtests. Twenty is enough for a median
+ * to mean something, and the sample count is shown alongside it.
+ */
+export const MIN_REPORTABLE_SAMPLES = 20;
+
+/** A pong later than this is not a measurement, it is a straggler. */
+const PING_TIMEOUT_MS = 2000;
 const MAX_SAMPLES = 600;
 
 function percentile(sorted: readonly number[], p: number): number {
@@ -29,6 +37,11 @@ export class LatencyTracker {
 
   recordSent(id: number, now: number): void {
     this.pending.set(id, now);
+    // Drop the ones that are never coming back, so a late reply cannot land
+    // years later and drag the median with it.
+    for (const [pendingId, sentAt] of this.pending) {
+      if (now - sentAt > PING_TIMEOUT_MS) this.pending.delete(pendingId);
+    }
   }
 
   recordPong(id: number, now: number): number | null {
@@ -60,11 +73,22 @@ export class LatencyTracker {
 export class StreamQuality {
   private lastSeq: number | null = null;
   private lastTimestamp: number | null = null;
+  private lastArrivalAt: number | null = null;
   private lost = 0;
   private received = 0;
   private intervalMs = 0;
+  /** Gaps between arrivals, on the PC clock: the phone's own timing hides these. */
+  private readonly arrivals: number[] = [];
 
-  record(seq: number, timestamp: number): void {
+  record(seq: number, timestamp: number, arrivedAt = 0): void {
+    if (arrivedAt > 0) {
+      if (this.lastArrivalAt !== null) {
+        this.arrivals.push(arrivedAt - this.lastArrivalAt);
+        if (this.arrivals.length > 240) this.arrivals.shift();
+      }
+      this.lastArrivalAt = arrivedAt;
+    }
+
     if (this.lastSeq !== null && seq > this.lastSeq) {
       this.lost += seq - this.lastSeq - 1;
     }
@@ -81,6 +105,17 @@ export class StreamQuality {
 
   get hz(): number {
     return this.intervalMs > 0 ? 1000 / this.intervalMs : 0;
+  }
+
+  /**
+   * The worst arrival gaps. Frames leaving the phone evenly can still arrive in
+   * bursts, and the phone's own timestamps cannot show that.
+   */
+  get arrivalGaps(): { p95: number; max: number } {
+    if (this.arrivals.length === 0) return { p95: 0, max: 0 };
+    const sorted = [...this.arrivals].sort((a, b) => a - b);
+    const index = Math.min(sorted.length - 1, Math.floor(0.95 * sorted.length));
+    return { p95: sorted[index] ?? 0, max: sorted.at(-1) ?? 0 };
   }
 
   get lossPercent(): number {

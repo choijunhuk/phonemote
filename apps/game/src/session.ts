@@ -28,6 +28,7 @@ export interface PlayerDebugInfo {
   readonly latency: LatencyStats;
   readonly hz: number;
   readonly lossPercent: number;
+  readonly arrivalGaps: { p95: number; max: number };
   /** Counted so the player can compare swings felt against swings detected. */
   readonly swingCount: number;
   readonly lastSwing: SwingRecord | null;
@@ -180,6 +181,7 @@ export class GameSession {
         ({ samples: 0, medianMs: Number.NaN, p95Ms: Number.NaN, reportable: false } as LatencyStats),
       hz: quality?.hz ?? 0,
       lossPercent: quality?.lossPercent ?? 0,
+      arrivalGaps: quality?.arrivalGaps ?? { p95: 0, max: 0 },
       swingCount: this.swingCounts.get(playerId) ?? 0,
       lastSwing: this.lastSwings.get(playerId) ?? null,
       tilt: this.lastTilt.get(playerId) ?? null,
@@ -214,7 +216,7 @@ export class GameSession {
     this.accelHistory.set(frame.playerId, history);
 
     this.rawFrames.set(frame.playerId, frame);
-    this.quality.get(frame.playerId)?.record(frame.seq, frame.timestamp);
+    this.quality.get(frame.playerId)?.record(frame.seq, frame.timestamp, now);
 
     for (const action of this.mapper.update(frame)) {
       if (action.kind === 'swing') {

@@ -1,3 +1,4 @@
+import { MIN_REPORTABLE_SAMPLES } from '../net/latency.js';
 import { session } from '../session.js';
 
 /**
@@ -60,8 +61,9 @@ export class DebugOverlay {
 
     const { raw, canonical, latency } = info;
     const rtt = latency.reportable
-      ? `median ${latency.medianMs.toFixed(1)} ms   p95 ${latency.p95Ms.toFixed(1)} ms`
-      : `표본 ${latency.samples}/100 수집 중`;
+      ? `median ${latency.medianMs.toFixed(1)} ms   p95 ${latency.p95Ms.toFixed(1)} ms` +
+        `   (${latency.samples} 표본)`
+      : `표본 ${latency.samples}/${MIN_REPORTABLE_SAMPLES} 수집 중`;
 
     this.element.textContent = [
       header,
@@ -86,7 +88,8 @@ export class DebugOverlay {
         : 'fused    (off)',
       '',
       `screen   ${raw.screenOrientation}   buttons ${raw.buttons}   seq ${raw.seq}`,
-      `stream   ${info.hz.toFixed(1)} Hz   loss ${info.lossPercent.toFixed(2)}%`,
+      `stream   ${info.hz.toFixed(1)} Hz   loss ${info.lossPercent.toFixed(2)}%` +
+        `   도착간격 p95 ${info.arrivalGaps.p95.toFixed(0)}ms max ${info.arrivalGaps.max.toFixed(0)}ms`,
       `sensor   ${info.sensorStaleMs > 300 ? `멈춤 ${(info.sensorStaleMs / 1000).toFixed(1)}s` : '정상'}` +
         `   |a| 최고(2s) ${info.accelPeak.toFixed(1)}`,
       `tilt     ${info.tilt ? `x${pad(info.tilt.x, 2)} y${pad(info.tilt.y, 2)}` : '-'}`,

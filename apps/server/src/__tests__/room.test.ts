@@ -245,6 +245,22 @@ describe('rejoining after a drop', () => {
     expect(back.ok && back.player.name).toBe('P1');
   });
 
+  it('reclaims its own slot from a connection that has not died yet', () => {
+    // The phone retries every second; the server only notices the dead socket
+    // on its own heartbeat. Both are "connected" at once.
+    const { room } = fixtures();
+    const zombie = new FakeConnection();
+    room.addController(zombie, 'junhuk', 'client-a');
+    room.addController(new FakeConnection(), 'other', 'client-b');
+
+    const returning = new FakeConnection();
+    const result = room.addController(returning, undefined, 'client-a');
+
+    expect(result.ok && result.player.id).toBe(1);
+    expect(zombie.closed).toBe(true);
+    expect(room.playerCount).toBe(2);
+  });
+
   it('still refuses a fifth controller while a slot is held', () => {
     const { room } = fixtures();
     const phones = [1, 2, 3, 4].map(() => new FakeConnection());
