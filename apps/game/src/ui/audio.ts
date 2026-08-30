@@ -51,6 +51,9 @@ export const sfx = {
   whiff(): void {
     tone({ frequency: 180, durationMs: 90, type: 'sine', gain: 0.03, slideTo: 120 });
   },
+  tick(): void {
+    tone({ frequency: 880, durationMs: 45, type: 'square', gain: 0.035 });
+  },
   wall(): void {
     tone({ frequency: 260, durationMs: 60, type: 'triangle' });
   },

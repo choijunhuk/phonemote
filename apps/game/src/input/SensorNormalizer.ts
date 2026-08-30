@@ -68,12 +68,27 @@ function clamp(value: number, min: number, max: number): number {
  * Euler angles cannot be permuted like a vector, so the canonical body axes are
  * carried into world space and the angles are read back off them there.
  */
+export interface CanonicalPose {
+  readonly angles: CanonicalAngles;
+  /** World up expressed in canonical axes; free of the angles' singularities. */
+  readonly up: CanonicalVector;
+}
+
 export function orientationToCanonical(
   alpha: number,
   beta: number,
   gamma: number,
   screenAngleDeg: number,
 ): CanonicalAngles {
+  return canonicalPose(alpha, beta, gamma, screenAngleDeg).angles;
+}
+
+export function canonicalPose(
+  alpha: number,
+  beta: number,
+  gamma: number,
+  screenAngleDeg: number,
+): CanonicalPose {
   const theta = screenAngleDeg * DEG;
   const cos = Math.cos(theta);
   const sin = Math.sin(theta);
@@ -88,13 +103,18 @@ export function orientationToCanonical(
   const down = deviceToWorld(downDevice, alpha, beta, gamma);
 
   return {
-    // World +Z is up, so the vertical component of "forward" is the elevation.
-    pitch: Math.asin(clamp(forward.z, -1, 1)) * RAD,
-    // Right edge dipping below horizontal means a positive roll.
-    roll: Math.atan2(-right.z, -down.z) * RAD,
-    // Heading, measured from north. Absolute value is meaningless on Chrome's
-    // relative deviceorientation; only differences are usable.
-    yaw: Math.atan2(forward.x, forward.y) * RAD,
+    angles: {
+      // World +Z is up, so the vertical component of "forward" is the elevation.
+      pitch: Math.asin(clamp(forward.z, -1, 1)) * RAD,
+      // Right edge dipping below horizontal means a positive roll. This goes
+      // singular when forward is vertical, which is why `up` exists.
+      roll: Math.atan2(-right.z, -down.z) * RAD,
+      // Heading, measured from north. Absolute value is meaningless on Chrome's
+      // relative deviceorientation; only differences are usable.
+      yaw: Math.atan2(forward.x, forward.y) * RAD,
+    },
+    // Each canonical axis's share of world up: no angles, so no singularity.
+    up: { x: right.z, y: -down.z, z: -forward.z },
   };
 }
 
@@ -122,18 +142,21 @@ export function normalize(frame: SensorFrame, previousTimestamp: number | null):
 
   const dtMs = previousTimestamp === null ? 0 : frame.timestamp - previousTimestamp;
 
+  const pose = canonicalPose(
+    frame.orientation.alpha,
+    frame.orientation.beta,
+    frame.orientation.gamma,
+    screenAngle,
+  );
+
   return {
     playerId: frame.playerId,
     seq: frame.seq,
     timestamp: frame.timestamp,
     // A negative dt would mean the phone clock jumped; treat it as a fresh start.
     dt: dtMs > 0 ? dtMs / 1000 : 0,
-    orientation: orientationToCanonical(
-      frame.orientation.alpha,
-      frame.orientation.beta,
-      frame.orientation.gamma,
-      screenAngle,
-    ),
+    orientation: pose.angles,
+    up: pose.up,
     angularVelocity: {
       pitch: omega.x,
       yaw: -omega.y,

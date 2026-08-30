@@ -1,8 +1,7 @@
 import Phaser from 'phaser';
 import { CalibrationScene } from './scenes/CalibrationScene.js';
 import { LobbyScene } from './scenes/LobbyScene.js';
-import { PointerTest } from './scenes/games/PointerTest.js';
-import { Tennis } from './scenes/games/Tennis.js';
+import { GAMES } from './games.js';
 import { session } from './session.js';
 import { DebugOverlay } from './ui/DebugOverlay.js';
 
@@ -48,5 +47,6 @@ new Phaser.Game({
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [LobbyScene, CalibrationScene, PointerTest, Tennis],
+  // Games come from the registry, so adding one is a single edit there.
+  scene: [LobbyScene, CalibrationScene, ...GAMES.map((game) => game.scene)],
 });

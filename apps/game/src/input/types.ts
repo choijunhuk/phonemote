@@ -29,6 +29,15 @@ export interface CanonicalSensorFrame {
   readonly dt: number;
   /** Degrees. yaw is relative only — see ARCHITECTURE.md 5.7. */
   readonly orientation: CanonicalAngles;
+  /**
+   * Which way is up, as a unit vector in canonical axes (ARCHITECTURE.md 5.8).
+   *
+   * Angles go singular when the phone is laid flat or stood on end, and near
+   * those poses a tiny movement swings roll wildly. This has no such pose, so
+   * anything judging how the phone is held should read this rather than the
+   * angles.
+   */
+  readonly up: CanonicalVector;
   /** Degrees per second. */
   readonly angularVelocity: CanonicalAngles;
   /** m/s^2, gravity excluded. */
@@ -50,5 +59,11 @@ export type GameAction =
       timestamp: number;
     }
   | { kind: 'tilt'; playerId: number; x: number; y: number }
+  /**
+   * Which way is up, in canonical axes. Continuous pose belongs in the action
+   * stream like everything else: a scene that reached past this for the frame
+   * itself would be back to reading sensors (ARCHITECTURE.md P4).
+   */
+  | { kind: 'pose'; playerId: number; up: CanonicalVector }
   | { kind: 'button_down'; playerId: number; button: ButtonName }
   | { kind: 'button_up'; playerId: number; button: ButtonName };

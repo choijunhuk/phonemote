@@ -18,6 +18,8 @@ import type { CanonicalSensorFrame, GameAction } from './types.js';
 export interface InputMapperConfig {
   readonly pointer?: PointerOptions | false;
   readonly swing?: boolean;
+  /** Emit the gravity direction every frame, for pose-holding games. */
+  readonly pose?: boolean;
   readonly tilt?: TiltOptions | false;
   /**
    * Fuse gyro with gravity before the modes see the pose. On by default: it
@@ -190,6 +192,10 @@ export class InputMapper {
     if (state.tilt) {
       const { x, y } = state.tilt.update(fused);
       actions.push({ kind: 'tilt', playerId: canonical.playerId, x, y });
+    }
+
+    if (this.config.pose === true) {
+      actions.push({ kind: 'pose', playerId: canonical.playerId, up: canonical.up });
     }
 
     if (state.swing) {

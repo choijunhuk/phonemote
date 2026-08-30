@@ -9,6 +9,7 @@ function frame(pitch: number, roll: number): CanonicalSensorFrame {
     timestamp: 0,
     dt: 1 / 60,
     orientation: { yaw: 0, pitch, roll },
+    up: { x: 0, y: 1, z: 0 },
     angularVelocity: { yaw: 0, pitch: 0, roll: 0 },
     acceleration: { x: 0, y: 0, z: 0 },
     buttons: 0,
