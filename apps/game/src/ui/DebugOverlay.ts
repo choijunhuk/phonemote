@@ -82,6 +82,13 @@ export class DebugOverlay {
       '',
       `screen   ${raw.screenOrientation}   buttons ${raw.buttons}   seq ${raw.seq}`,
       `stream   ${info.hz.toFixed(1)} Hz   loss ${info.lossPercent.toFixed(2)}%`,
+      `tilt     ${info.tilt ? `x${pad(info.tilt.x, 2)} y${pad(info.tilt.y, 2)}` : '-'}`,
+      `swings   ${info.swingCount}회` +
+        (info.lastSwing
+          ? `   마지막 ${info.lastSwing.direction8} ` +
+            `강도 ${info.lastSwing.strength.toFixed(2)} ` +
+            `(${((performance.now() - info.lastSwing.at) / 1000).toFixed(1)}s 전)`
+          : ''),
       `rtt      ${rtt}`,
     ].join('\n');
   }

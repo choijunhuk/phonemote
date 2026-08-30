@@ -22,7 +22,9 @@ export interface TiltAxes {
   readonly y: number;
 }
 
-const DEFAULTS = { rangeDeg: 45, deadzone: 0.05, exponent: 1 } as const;
+// 45 degrees of wrist travel to reach full deflection asked too much of a
+// phone held out in front of you; 35 lands closer to a comfortable range.
+const DEFAULTS = { rangeDeg: 35, deadzone: 0.05, exponent: 1 } as const;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));

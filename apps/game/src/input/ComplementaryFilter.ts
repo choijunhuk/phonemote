@@ -20,7 +20,13 @@ export interface FusionOptions {
   readonly maxGapSeconds?: number;
 }
 
-const DEFAULT_GYRO_WEIGHT = 0.98;
+/**
+ * 0.98 assumes a healthy gyro; where the rates are weak or missing the pose
+ * then crawls towards gravity with a 0.8 s time constant, which reads as the
+ * tilt lagging and dropping input. 0.9 still smooths the jitter but recovers
+ * in under 0.2 s even with no gyro at all.
+ */
+const DEFAULT_GYRO_WEIGHT = 0.9;
 const DEFAULT_MAX_GAP_SECONDS = 0.25;
 
 /** Shortest signed way from `from` to `to`, in degrees. */

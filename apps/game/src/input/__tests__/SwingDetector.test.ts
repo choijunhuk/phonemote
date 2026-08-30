@@ -4,6 +4,7 @@ import {
   SWING_COOLDOWN_MS,
   SWING_MAX,
   SWING_MIN_WINDOW_MS,
+  SWING_QUIET_MS,
   SWING_THRESHOLD,
   SwingDetector,
   direction8Of,
@@ -45,7 +46,9 @@ function swingOnce(
   push(startAt, SWING_THRESHOLD + 1);
   push(startAt + 30, peak);
   push(startAt + 60, peak * 0.6);
-  push(startAt + SWING_CAPTURE_WINDOW_MS, 1);
+  // The burst ends by going quiet, not by running out the window.
+  push(startAt + 80, 1);
+  push(startAt + 80 + SWING_QUIET_MS, 1);
   return events;
 }
 
@@ -104,14 +107,14 @@ describe('detection', () => {
   it('ignores a second swing during the cooldown', () => {
     const detector = new SwingDetector();
     swingOnce(detector, 1000, 30);
-    const during = swingOnce(detector, 1000 + SWING_CAPTURE_WINDOW_MS + 50, 35);
+    const during = swingOnce(detector, 1000 + 80 + SWING_QUIET_MS + 10, 35);
     expect(during).toHaveLength(0);
   });
 
   it('accepts the next swing once the cooldown has passed', () => {
     const detector = new SwingDetector();
     swingOnce(detector, 1000, 30);
-    const emittedAt = 1000 + SWING_CAPTURE_WINDOW_MS;
+    const emittedAt = 1000 + 80 + SWING_QUIET_MS;
     const after = swingOnce(detector, emittedAt + SWING_COOLDOWN_MS + 1, 35);
     expect(after).toHaveLength(1);
   });
@@ -132,18 +135,47 @@ describe('detection', () => {
     expect(event?.timestamp).toBeGreaterThanOrEqual(5000 + SWING_MIN_WINDOW_MS);
   });
 
-  it('fires as soon as the burst subsides, not at the end of the window', () => {
+  it('reports the peak of the whole burst, not its opening', () => {
     const detector = new SwingDetector();
     const push = (t: number, magnitude: number): DetectorEvent | null =>
       detector.update(frame(t, { x: 0, y: 0, z: -magnitude }));
 
-    expect(push(0, 80)).toBeNull();
-    // Still peaking at 20 ms: too early to tell the peak from the ramp.
-    expect(push(20, 95)).toBeNull();
-    const event = push(40, 5);
+    expect(push(0, 30)).toBeNull();
+    // A dip mid-swing must not end the burst and understate the strength.
+    expect(push(20, 28)).toBeNull();
+    expect(push(40, 95)).toBeNull();
+    expect(push(60, 5)).toBeNull();
+
+    const event = push(60 + SWING_QUIET_MS, 4);
     expect(event).not.toBeNull();
-    expect(event?.timestamp).toBe(40);
     expect(event?.strength).toBe(1);
+  });
+
+  it('still sees the strike that follows a backswing', () => {
+    // The regression that made tennis feel broken: the backswing claimed the
+    // event and the strike landed inside the cooldown.
+    const detector = new SwingDetector();
+    const push = (t: number, magnitude: number): DetectorEvent | null =>
+      detector.update(frame(t, { x: 0, y: 0, z: -magnitude }));
+
+    const events: DetectorEvent[] = [];
+    const record = (t: number, magnitude: number): void => {
+      const event = push(t, magnitude);
+      if (event) events.push(event);
+    };
+
+    // Backswing, then quiet, then the strike 200 ms after it started.
+    record(0, 40);
+    record(30, 35);
+    record(60, 3);
+    record(110, 2);
+    record(200, 70);
+    record(230, 100);
+    record(270, 4);
+    record(320, 3);
+
+    expect(events).toHaveLength(2);
+    expect(events[1]?.strength).toBeGreaterThan(events[0]?.strength ?? 1);
   });
 
   it('forgets everything on reset', () => {

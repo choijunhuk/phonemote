@@ -12,7 +12,9 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "lint": "eslint .",
-    "setup:certs": "bash scripts/setup-certs.sh"
+    "setup:certs": "bash scripts/setup-certs.sh",
+    "build": "pnpm -r build",
+    "play": "pnpm --filter @phonemote/controller build && pnpm -r --parallel play"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

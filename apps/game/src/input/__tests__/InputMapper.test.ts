@@ -95,7 +95,8 @@ describe('modes', () => {
     mapper.update(raw({ timestamp: 0 }));
     mapper.update(raw({ timestamp: 16, acceleration: { x: 0, y: 0, z: -40 } }));
     mapper.update(raw({ timestamp: 60, acceleration: { x: 0, y: 0, z: -90 } }));
-    const actions = mapper.update(raw({ timestamp: 130, acceleration: { x: 0, y: 0, z: 0 } }));
+    mapper.update(raw({ timestamp: 130, acceleration: { x: 0, y: 0, z: 0 } }));
+    const actions = mapper.update(raw({ timestamp: 190, acceleration: { x: 0, y: 0, z: 0 } }));
 
     const swing = actions.find((action) => action.kind === 'swing');
     expect(swing).toBeDefined();

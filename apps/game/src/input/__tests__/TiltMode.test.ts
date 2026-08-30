@@ -51,7 +51,8 @@ describe('tilt axes', () => {
   });
 
   it('treats the calibrated pose as centre', () => {
-    const tilt = new TiltMode({ deadzone: 0 });
+    // Range is pinned here so the test survives retuning the default.
+    const tilt = new TiltMode({ deadzone: 0, rangeDeg: 45 });
     tilt.calibrate(frame(10, -15));
     expect(tilt.update(frame(10, -15))).toEqual({ x: 0, y: 0 });
     expect(tilt.update(frame(10, 30)).x).toBeCloseTo(1, 6);

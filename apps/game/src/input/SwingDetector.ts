@@ -21,11 +21,21 @@ export const SWING_MAX = 90;
 
 /** Long enough for the peak to develop, short enough to still feel immediate. */
 export const SWING_MIN_WINDOW_MS = 25;
-export const SWING_CAPTURE_WINDOW_MS = 80;
-export const SWING_COOLDOWN_MS = 300;
+/** Backstop for a burst that never settles. */
+export const SWING_CAPTURE_WINDOW_MS = 250;
+/** The burst is over once the phone has been this quiet for this long. */
+export const SWING_QUIET_MS = 40;
+export const SWING_QUIET_RATIO = 0.6;
 
-/** Once the burst has fallen this far below its peak, the swing is over. */
-export const SWING_DECAY_RATIO = 0.5;
+/**
+ * A tennis stroke is two bursts: the backswing and then the strike. The old
+ * 300 ms lockout meant the backswing claimed the event and the strike — the one
+ * the player actually aimed — landed inside the cooldown and was thrown away.
+ * Short enough now that a strike arriving ~200 ms after the backswing still
+ * gets its own event; a stray backswing event is harmless because the game only
+ * acts on a swing when the ball is in the hit zone.
+ */
+export const SWING_COOLDOWN_MS = 80;
 
 export interface SwingEvent {
   readonly playerId: number;
@@ -58,6 +68,8 @@ interface Capture {
   readonly startedAt: number;
   peak: number;
   peakVector: CanonicalVector;
+  /** When the motion first dropped below the quiet line, if it has. */
+  quietSince: number | null;
 }
 
 export class SwingDetector {
@@ -74,14 +86,18 @@ export class SwingDetector {
         this.capture.peakVector = frame.acceleration;
       }
 
-      // Waiting out a fixed window would add its full length to every hit. Fire
-      // as soon as the burst is clearly past its peak; the window is only the
-      // backstop for a swing that never settles.
+      // Track one whole burst rather than firing at the first dip: the peak of
+      // a swing often comes after a softer opening, and reporting the opening
+      // would understate the strength and mistake its direction.
+      const quiet = strengthNow < SWING_THRESHOLD * SWING_QUIET_RATIO;
+      if (quiet) this.capture.quietSince ??= now;
+      else this.capture.quietSince = null;
+
       const elapsed = now - this.capture.startedAt;
-      const subsided =
-        strengthNow < Math.max(SWING_THRESHOLD, this.capture.peak * SWING_DECAY_RATIO);
+      const settled =
+        this.capture.quietSince !== null && now - this.capture.quietSince >= SWING_QUIET_MS;
       if (elapsed < SWING_MIN_WINDOW_MS) return null;
-      if (!subsided && elapsed < SWING_CAPTURE_WINDOW_MS) return null;
+      if (!settled && elapsed < SWING_CAPTURE_WINDOW_MS) return null;
 
       const event: SwingEvent = {
         playerId: frame.playerId,
@@ -98,7 +114,12 @@ export class SwingDetector {
     if (now < this.cooldownUntil) return null;
     if (strengthNow <= SWING_THRESHOLD) return null;
 
-    this.capture = { startedAt: now, peak: strengthNow, peakVector: frame.acceleration };
+    this.capture = {
+      startedAt: now,
+      peak: strengthNow,
+      peakVector: frame.acceleration,
+      quietSince: null,
+    };
     return null;
   }
 

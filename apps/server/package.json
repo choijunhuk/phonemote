@@ -8,7 +8,8 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json",
     "cert-hosts": "tsx src/certHosts.ts",
-    "throughput": "tsx src/throughput.ts"
+    "throughput": "tsx src/throughput.ts",
+    "play": "tsx src/index.ts"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",

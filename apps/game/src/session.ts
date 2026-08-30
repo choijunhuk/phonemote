@@ -14,6 +14,13 @@ import type { CanonicalSensorFrame, GameAction } from './input/types.js';
 
 const PING_INTERVAL_MS = 1000;
 
+export interface SwingRecord {
+  readonly strength: number;
+  readonly direction8: string;
+  /** PC clock, so "how long ago" can be shown without touching phone time. */
+  readonly at: number;
+}
+
 export interface PlayerDebugInfo {
   readonly raw: SensorFrame | null;
   readonly canonical: CanonicalSensorFrame | null;
@@ -21,6 +28,10 @@ export interface PlayerDebugInfo {
   readonly latency: LatencyStats;
   readonly hz: number;
   readonly lossPercent: number;
+  /** Counted so the player can compare swings felt against swings detected. */
+  readonly swingCount: number;
+  readonly lastSwing: SwingRecord | null;
+  readonly tilt: { x: number; y: number } | null;
 }
 
 type ActionListener = (action: GameAction) => void;
@@ -33,6 +44,9 @@ export class GameSession {
   private readonly latency = new Map<number, LatencyTracker>();
   private readonly quality = new Map<number, StreamQuality>();
   private readonly rawFrames = new Map<number, SensorFrame>();
+  private readonly swingCounts = new Map<number, number>();
+  private readonly lastSwings = new Map<number, SwingRecord>();
+  private readonly lastTilt = new Map<number, { x: number; y: number }>();
 
   private mapper = new InputMapper();
   private client: GameClient | null = null;
@@ -126,6 +140,9 @@ export class GameSession {
         ({ samples: 0, medianMs: Number.NaN, p95Ms: Number.NaN, reportable: false } as LatencyStats),
       hz: quality?.hz ?? 0,
       lossPercent: quality?.lossPercent ?? 0,
+      swingCount: this.swingCounts.get(playerId) ?? 0,
+      lastSwing: this.lastSwings.get(playerId) ?? null,
+      tilt: this.lastTilt.get(playerId) ?? null,
     };
   }
 
@@ -134,6 +151,15 @@ export class GameSession {
     this.quality.get(frame.playerId)?.record(frame.seq, frame.timestamp);
 
     for (const action of this.mapper.update(frame)) {
+      if (action.kind === 'swing') {
+        this.swingCounts.set(action.playerId, (this.swingCounts.get(action.playerId) ?? 0) + 1);
+        this.lastSwings.set(action.playerId, {
+          strength: action.strength,
+          direction8: action.direction8,
+          at: performance.now(),
+        });
+      }
+      if (action.kind === 'tilt') this.lastTilt.set(action.playerId, { x: action.x, y: action.y });
       for (const listener of this.actionListeners) listener(action);
     }
   }
