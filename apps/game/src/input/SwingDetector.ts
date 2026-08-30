@@ -15,8 +15,12 @@ import type { CanonicalSensorFrame, CanonicalVector, Direction8 } from './types.
  * Calibrated against a real phone, not the spec's first guess of 15/40: a
  * deliberate swing peaks near 100 m/s^2, so a 40 ceiling made every swing
  * read as maximum strength and every ball come back at full speed.
+ *
+ * The floor came down from 25 to 20 after three swings in ten went unnoticed:
+ * a controlled stroke does not peak nearly as hard as a shake does. Ordinary
+ * hand movement sits around 10, so there is still room below this.
  */
-export const SWING_THRESHOLD = 25;
+export const SWING_THRESHOLD = 20;
 export const SWING_MAX = 90;
 
 /** Long enough for the peak to develop, short enough to still feel immediate. */

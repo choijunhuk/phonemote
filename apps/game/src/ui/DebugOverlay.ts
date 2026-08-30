@@ -82,6 +82,8 @@ export class DebugOverlay {
       '',
       `screen   ${raw.screenOrientation}   buttons ${raw.buttons}   seq ${raw.seq}`,
       `stream   ${info.hz.toFixed(1)} Hz   loss ${info.lossPercent.toFixed(2)}%`,
+      `sensor   ${info.sensorStaleMs > 300 ? `멈춤 ${(info.sensorStaleMs / 1000).toFixed(1)}s` : '정상'}` +
+        `   |a| 최고(2s) ${info.accelPeak.toFixed(1)}`,
       `tilt     ${info.tilt ? `x${pad(info.tilt.x, 2)} y${pad(info.tilt.y, 2)}` : '-'}`,
       `swings   ${info.swingCount}회` +
         (info.lastSwing

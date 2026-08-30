@@ -32,6 +32,14 @@ export interface PlayerDebugInfo {
   readonly swingCount: number;
   readonly lastSwing: SwingRecord | null;
   readonly tilt: { x: number; y: number } | null;
+  /**
+   * Milliseconds since the phone's sensor values last changed. The phone sends
+   * its cached reading 60 times a second whether or not the sensors are still
+   * firing, so a healthy stream says nothing about a stalled sensor. This does.
+   */
+  readonly sensorStaleMs: number;
+  /** Strongest |a| seen in the last two seconds, for reading swing strength. */
+  readonly accelPeak: number;
 }
 
 type ActionListener = (action: GameAction) => void;
@@ -47,6 +55,8 @@ export class GameSession {
   private readonly swingCounts = new Map<number, number>();
   private readonly lastSwings = new Map<number, SwingRecord>();
   private readonly lastTilt = new Map<number, { x: number; y: number }>();
+  private readonly sensorChangedAt = new Map<number, number>();
+  private readonly accelHistory = new Map<number, Array<{ at: number; magnitude: number }>>();
 
   private mapper = new InputMapper();
   private client: GameClient | null = null;
@@ -143,10 +153,31 @@ export class GameSession {
       swingCount: this.swingCounts.get(playerId) ?? 0,
       lastSwing: this.lastSwings.get(playerId) ?? null,
       tilt: this.lastTilt.get(playerId) ?? null,
+      sensorStaleMs: performance.now() - (this.sensorChangedAt.get(playerId) ?? performance.now()),
+      accelPeak: (this.accelHistory.get(playerId) ?? []).reduce(
+        (peak, sample) => Math.max(peak, sample.magnitude),
+        0,
+      ),
     };
   }
 
   private handleFrame(frame: SensorFrame): void {
+    const now = performance.now();
+    const previous = this.rawFrames.get(frame.playerId);
+    if (!previous || !sameReading(previous, frame)) {
+      this.sensorChangedAt.set(frame.playerId, now);
+    }
+
+    const magnitude = Math.hypot(
+      frame.acceleration.x,
+      frame.acceleration.y,
+      frame.acceleration.z,
+    );
+    const history = this.accelHistory.get(frame.playerId) ?? [];
+    history.push({ at: now, magnitude });
+    while (history.length > 0 && now - (history[0]?.at ?? now) > 2000) history.shift();
+    this.accelHistory.set(frame.playerId, history);
+
     this.rawFrames.set(frame.playerId, frame);
     this.quality.get(frame.playerId)?.record(frame.seq, frame.timestamp);
 
@@ -168,6 +199,21 @@ export class GameSession {
     const snapshot = this.players;
     for (const listener of this.playersListeners) listener(snapshot);
   }
+}
+
+/** Identical sensor values mean the phone is resending a cached reading. */
+function sameReading(a: SensorFrame, b: SensorFrame): boolean {
+  return (
+    a.orientation.alpha === b.orientation.alpha &&
+    a.orientation.beta === b.orientation.beta &&
+    a.orientation.gamma === b.orientation.gamma &&
+    a.acceleration.x === b.acceleration.x &&
+    a.acceleration.y === b.acceleration.y &&
+    a.acceleration.z === b.acceleration.z &&
+    a.rotationRate.alpha === b.rotationRate.alpha &&
+    a.rotationRate.beta === b.rotationRate.beta &&
+    a.rotationRate.gamma === b.rotationRate.gamma
+  );
 }
 
 /** One session per page; scenes import this rather than passing it around. */
