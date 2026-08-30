@@ -46,7 +46,12 @@ export class DebugOverlay {
     if (!this.visible) return;
 
     const info = session.debugInfo(this.selected);
-    const header = `player ${this.selected}  (1-4 to switch, d to hide)`;
+    const header =
+      `player ${this.selected}  (1-4 to switch, d to hide)` +
+      (session.status ? `
+장면     ${session.status}` : '') +
+      (session.lastError ? `
+오류     ${session.lastError.message}` : '');
 
     if (!info.raw || !info.canonical) {
       this.element.textContent = `${header}\n\n연결된 프레임 없음`;

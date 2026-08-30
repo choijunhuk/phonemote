@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUTO_SERVE_SECONDS,
   BASE_SPEED,
   HIT_ZONE,
   MAX_SPEED,
@@ -150,6 +151,27 @@ describe('finishing', () => {
     expect(isMatchPoint(state)).toBe(false);
     state.score = [1, 0];
     expect(isMatchPoint(state)).toBe(true);
+  });
+});
+
+describe('never getting stuck', () => {
+  it('serves on its own if nobody swings', () => {
+    const state = createTennis();
+    expect(state.phase).toBe('serve');
+
+    run(state, AUTO_SERVE_SECONDS - 0.5);
+    expect(state.phase).toBe('serve');
+
+    run(state, 1);
+    expect(state.phase).toBe('rally');
+    expect(state.ball.vx).not.toBe(0);
+  });
+
+  it('resets the wait once a serve is played', () => {
+    const state = createTennis();
+    run(state, 2);
+    swing(state, 1, 1, 'E');
+    expect(state.serveWait).toBe(0);
   });
 });
 

@@ -43,6 +43,11 @@ export interface PlayerDebugInfo {
 }
 
 type ActionListener = (action: GameAction) => void;
+
+export interface SessionError {
+  readonly message: string;
+  readonly at: number;
+}
 type PlayersListener = (players: readonly PlayerInfo[]) => void;
 
 export class GameSession {
@@ -64,6 +69,9 @@ export class GameSession {
 
   room: RoomInfo | null = null;
   connected = false;
+  /** Whatever a scene is doing right now, for the debug overlay. */
+  status = '';
+  lastError: SessionError | null = null;
 
   get players(): readonly PlayerInfo[] {
     return [...this.playerMap.values()].sort((a, b) => a.id - b.id);
@@ -191,8 +199,23 @@ export class GameSession {
         });
       }
       if (action.kind === 'tilt') this.lastTilt.set(action.playerId, { x: action.x, y: action.y });
-      for (const listener of this.actionListeners) listener(action);
+      for (const listener of this.actionListeners) {
+        // A scene that throws here would otherwise take down the socket
+        // handler, and every later frame with it: the stream would still read
+        // 60 Hz and 0% loss while nothing on screen ever moved again.
+        try {
+          listener(action);
+        } catch (error) {
+          this.reportError(error);
+        }
+      }
     }
+  }
+
+  reportError(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.lastError = { message, at: performance.now() };
+    console.error('[session]', error);
   }
 
   private emitPlayers(): void {

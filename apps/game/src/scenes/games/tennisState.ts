@@ -38,6 +38,8 @@ export interface TennisState {
   /** Seconds left in the current non-rally phase. */
   timer: number;
   rally: number;
+  /** Seconds the current serve has gone unplayed. */
+  serveWait: number;
 }
 
 /**
@@ -49,6 +51,8 @@ export const HIT_ZONE = 0.26;
 export const BASE_SPEED = 0.32;
 export const MAX_SPEED = 0.8;
 const POINT_PAUSE_SECONDS = 1.2;
+/** Nobody should be able to get stuck staring at a ball that will not move. */
+export const AUTO_SERVE_SECONDS = 3;
 
 export const DEFAULT_CONFIG: TennisConfig = { players: 2, pointsToWin: 5, missesAllowed: 3 };
 
@@ -77,6 +81,7 @@ export function createTennis(config: Partial<TennisConfig> = {}): TennisState {
     winner: null,
     timer: 0,
     rally: 0,
+    serveWait: 0,
   };
 }
 
@@ -128,6 +133,7 @@ export function swing(
     state.ball = { ...serveSpot(state), vx: toward * speedFor(strength), vy: vertical };
     state.phase = 'rally';
     state.rally = 1;
+    state.serveWait = 0;
     return { hit: true, served: true };
   }
 
@@ -159,6 +165,11 @@ export function step(state: TennisState, dt: number): void {
 
   if (state.phase === 'serve') {
     state.ball = serveSpot(state);
+    state.serveWait += dt;
+    // Serve for them rather than leave the game looking broken. A missed swing,
+    // a phone that dropped out, a player who put it down — all end the same way
+    // without this, with a ball that never moves again.
+    if (state.serveWait >= AUTO_SERVE_SECONDS) swing(state, state.server, 0.35, 'E');
     return;
   }
 

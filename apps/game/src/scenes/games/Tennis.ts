@@ -89,6 +89,10 @@ export class Tennis extends Phaser.Scene {
     }
 
     this.render();
+    session.status =
+      `tennis ${this.state.phase}  공 ${this.state.ball.x.toFixed(2)},` +
+      `${this.state.ball.y.toFixed(2)}  속도 ${this.state.ball.vx.toFixed(2)}` +
+      `  서브 P${this.state.server}`;
   }
 
   private drawCourt(): void {
