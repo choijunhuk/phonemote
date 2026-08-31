@@ -293,3 +293,25 @@ describe('spotting a phone calibrated flat', () => {
     expect(isFlatGrip(upFor(0, -90))).toBe(false);
   });
 });
+
+describe('never asking for a pose that standing still would pass', () => {
+  it('drops a 45 degree pose while the tolerance is 45', () => {
+    // Measured in the browser: round one called "tilt right 45" at a tolerance
+    // of 45, both players read exactly 45 degrees off without moving, and both
+    // were scored as holding it.
+    const usable = posesUsableFor([LEVEL_GRIP], 45).map((pose) => pose.key);
+    expect(usable).not.toContain('diagonal-right');
+    expect(usable).not.toContain('diagonal-left');
+    expect(usable).toContain('tilt-right');
+  });
+
+  it('brings them back once the tolerance tightens', () => {
+    expect(posesUsableFor([LEVEL_GRIP], 30).map((pose) => pose.key)).toContain('diagonal-right');
+  });
+
+  it('never calls "stay as you are"', () => {
+    for (const grip of [LEVEL_GRIP, upFor(0, 0), upFor(35, -65)]) {
+      expect(posesUsableFor([grip], 30).map((pose) => pose.key)).not.toContain('level');
+    }
+  });
+});

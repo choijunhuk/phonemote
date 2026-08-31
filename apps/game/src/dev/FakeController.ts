@@ -100,6 +100,8 @@ const TILT_RANGE = 180;
  * never arm the detector — the keyboard could not swing, and nobody had played
  * tennis without a phone since.
  */
+/** Degrees per frame while a direction is held: 90 degrees in half a second. */
+const TILT_STEP = 3;
 const SWING_PEAK_RATE = 950;
 const SWING_FRAMES = 9;
 
@@ -142,10 +144,18 @@ class FakePhone {
     const horizontal = this.axis(this.keys.left, this.keys.right);
     const vertical = this.axis(this.keys.down, this.keys.up);
 
-    // Hold a direction and the pose leans that way and stays there, which is
-    // what a hand does; releasing lets it fall back to level.
-    this.roll = clamp(this.roll + horizontal * 3 - Math.sign(this.roll) * (horizontal === 0 ? 2 : 0), TILT_RANGE);
-    this.pitch = clamp(this.pitch + vertical * 3 - Math.sign(this.pitch) * (vertical === 0 ? 2 : 0), TILT_RANGE);
+    // Hold a direction to lean that way; let go and it stays there, because a
+    // phone stays where a hand puts it. It used to spring back to level, which
+    // meant no pose could be held at all — Freeze Frame was unplayable from the
+    // keyboard, and a stand-in that cannot do what the real thing does is not
+    // much of a stand-in. The trigger key snaps back to level.
+    if (this.held.has(this.keys.trigger)) {
+      this.pitch = 0;
+      this.roll = 0;
+    } else {
+      this.roll = clamp(this.roll + horizontal * TILT_STEP, TILT_RANGE);
+      this.pitch = clamp(this.pitch + vertical * TILT_STEP, TILT_RANGE);
+    }
 
     let acceleration = { x: 0, y: 0, z: 0 };
     let swingYaw = 0;
@@ -214,8 +224,34 @@ export function startFakeControllers(count: number): void {
     for (const phone of phones) session.injectFrame(phone.nextFrame(now));
   }, FRAME_MS);
 
+  /**
+   * A hand crank for the stand-ins.
+   *
+   * An automated browser can have no requestAnimationFrame and heavily
+   * throttled timers, which leaves both the game loop and this 60 Hz interval
+   * running at about 2 Hz — twenty seconds of driving buys one second of game.
+   * Feeding frames on a clock of the caller's choosing, alongside `game.step`,
+   * runs a whole match in a few milliseconds and makes the result repeatable.
+   */
+  if (import.meta.env.DEV) {
+    Object.assign(window, {
+      phonemoteFake: {
+        tick(now: number): void {
+          for (const phone of phones) session.injectFrame(phone.nextFrame(now));
+        },
+        press(key: string): void {
+          for (const phone of phones) phone.press(key);
+        },
+        release(key: string): void {
+          for (const phone of phones) phone.release(key);
+        },
+      },
+    });
+  }
+
   console.log(
-    `[fake] ${phones.length} keyboard controller(s): arrows/space/zxc/h` +
-      (phones.length > 1 ? ' and wasd/q/erf/g' : ''),
+    `[fake] ${phones.length} keyboard controller(s): arrows tilt (trigger = level again), ` +
+      'space swings, zxc buttons, h home' +
+      (phones.length > 1 ? ' — second on wasd/q/erf/g' : ''),
   );
 }

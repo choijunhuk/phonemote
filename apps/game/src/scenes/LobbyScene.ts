@@ -60,7 +60,7 @@ export class LobbyScene extends Phaser.Scene {
     this.add
       .text(width * 0.26, height * 0.29, '폰 Chrome으로 QR을 찍거나 룸 코드를 입력하세요', {
         fontFamily: 'system-ui, sans-serif',
-        fontSize: '18px',
+        fontSize: '24px',
         color: '#98a0b3',
       })
       .setOrigin(0.5);
@@ -71,7 +71,7 @@ export class LobbyScene extends Phaser.Scene {
     this.hintText = this.add
       .text(width / 2, height - 24, '', {
         fontFamily: 'system-ui, sans-serif',
-        fontSize: '18px',
+        fontSize: '24px',
         color: '#98a0b3',
         align: 'center',
       })
@@ -120,10 +120,12 @@ export class LobbyScene extends Phaser.Scene {
     const { width, height } = this.scale;
     this.slotTexts = [0, 1, 2, 3].map((index) =>
       this.add
+        // An empty slot still has to be visible from the sofa; #3a4152 on
+        // #0f1116 is not a colour at that distance, it is a smudge.
         .text(width * 0.06, height * (0.45 + index * 0.07), '', {
           fontFamily: 'system-ui, sans-serif',
           fontSize: '24px',
-          color: '#3a4152',
+          color: '#6f7994',
         })
         .setOrigin(0, 0.5),
     );
@@ -149,15 +151,17 @@ export class LobbyScene extends Phaser.Scene {
       const blurb = this.add
         .text(-tileWidth / 2 + 24, 14, game.blurb, {
           fontFamily: 'system-ui, sans-serif',
-          fontSize: '16px',
+          fontSize: '22px',
           color: '#98a0b3',
         })
         .setOrigin(0, 0);
+      // On the title's row, not the blurb's: at a size readable across a room
+      // the two shared a line and printed on top of each other.
       const players = this.add
-        .text(tileWidth / 2 - 24, 14, game.players, {
+        .text(tileWidth / 2 - 24, -18, game.players, {
           fontFamily: 'system-ui, sans-serif',
-          fontSize: '16px',
-          color: '#6b7488',
+          fontSize: '22px',
+          color: '#98a0b3',
         })
         .setOrigin(1, 0);
 
@@ -220,7 +224,7 @@ export class LobbyScene extends Phaser.Scene {
         text.setColor(player.color);
       } else {
         text.setText(`P${index + 1}  ―`);
-        text.setColor('#3a4152');
+        text.setColor('#6f7994');
       }
     });
 
@@ -251,7 +255,7 @@ export class LobbyScene extends Phaser.Scene {
       this.add
         .text(width * 0.26, height * 0.88, controllerUrl, {
           fontFamily: 'ui-monospace, monospace',
-          fontSize: '14px',
+          fontSize: '20px',
           color: '#98a0b3',
         })
         .setOrigin(0.5);

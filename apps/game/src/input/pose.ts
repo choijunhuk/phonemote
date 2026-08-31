@@ -180,12 +180,17 @@ function posesVisibleTo(
   minSeparationDeg: number,
   needed: number,
 ): NamedPose[] {
+  // Strictly greater, and never the do-nothing pose. At tolerance 45 the two
+  // 45-degree poses sat exactly on the line, so a player who never moved was
+  // scored as holding them — measured in the browser, round one, both players
+  // reading 45 degrees off and both passing.
   const visible = (pose: NamedPose, reference: CanonicalVector): boolean =>
-    pose.angleDeg === 0 ||
-    angleBetweenDeg(expectedUp(pose, reference), reference) >= minSeparationDeg;
+    pose.angleDeg !== 0 &&
+    angleBetweenDeg(expectedUp(pose, reference), reference) > minSeparationDeg;
 
   const usable: NamedPose[] = [];
   for (const pose of POSES) {
+    if (pose.angleDeg === 0) continue;
     if (references.filter((reference) => visible(pose, reference)).length < needed) continue;
 
     // And distinguishable from every pose already in the pool: two prompts that

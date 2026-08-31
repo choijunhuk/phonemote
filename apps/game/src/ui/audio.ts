@@ -4,6 +4,7 @@
  */
 
 let context: AudioContext | null = null;
+let unlocked = false;
 
 function ensureContext(): AudioContext | null {
   if (typeof AudioContext === 'undefined') return null;
@@ -12,6 +13,30 @@ function ensureContext(): AudioContext | null {
   // once it is already running.
   void context.resume();
   return context;
+}
+
+/**
+ * Wake the audio context on the first gesture at the screen.
+ *
+ * Chrome will not start one outside a user gesture, and the first sound this
+ * game makes is a ball being hit — by a phone, over a socket, with nobody
+ * having touched the machine the speakers are attached to. Without this the
+ * whole game is silent until somebody happens to click the window, which reads
+ * as broken audio rather than as a policy.
+ */
+export function unlockAudio(): void {
+  if (unlocked) return;
+  unlocked = true;
+
+  const wake = (): void => {
+    void ensureContext()?.resume();
+  };
+  for (const event of ['pointerdown', 'keydown', 'touchstart'] as const) {
+    window.addEventListener(event, wake, { once: false, passive: true });
+  }
+  // Some browsers hand back a running context straight away; asking costs
+  // nothing and saves the click when they do.
+  wake();
 }
 
 interface ToneOptions {

@@ -15,6 +15,14 @@ export interface JoinRequest {
   readonly name: string;
 }
 
+/**
+ * Shortest pulse a phone motor can actually deliver.
+ *
+ * Below this the motor never reaches speed, so the buzz arrives as silence and
+ * a working controller feels like a broken one.
+ */
+const MIN_PULSE_MS = 25;
+
 const HOLD_LABELS: ReadonlyArray<{ mode: HoldMode; label: string }> = [
   { mode: 'portrait', label: '세로로 들기' },
   { mode: 'landscape', label: '가로로 들기' },
@@ -205,6 +213,8 @@ export class ControllerUi {
     this.setStatus('joined', `P${playerId}`);
   }
 
+  private vibrateUntil = 0;
+
   setStatus(state: ConnectionState, detail?: string): void {
     this.statusEl.textContent = detail ? `${STATE_TEXT[state]} · ${detail}` : STATE_TEXT[state];
     this.statusEl.dataset['state'] = state;
@@ -214,9 +224,31 @@ export class ControllerUi {
     this.debugSection.textContent = text;
   }
 
+  /**
+   * Buzz the phone, in a vocabulary a hand can actually read.
+   *
+   * Two things get in the way of that. A pulse shorter than about 25 ms does
+   * not survive the motor's spin-up, so it arrives as nothing at all — which is
+   * indistinguishable from a controller that has stopped working. And
+   * `navigator.vibrate` cancels whatever is already playing, so a small buzz
+   * landing on top of a big one leaves the player feeling less rather than
+   * more: a whiff arriving 20 ms after a point would erase the point.
+   */
   vibrate(pattern: number[]): void {
     // Optional everywhere: if the phone will not buzz, the game plays on.
-    if ('vibrate' in navigator) navigator.vibrate(pattern);
+    if (!('vibrate' in navigator)) return;
+
+    const clamped = pattern.map((ms, index) =>
+      index % 2 === 0 ? Math.max(MIN_PULSE_MS, Math.round(ms)) : Math.round(ms),
+    );
+    const total = clamped.reduce((sum, ms) => sum + ms, 0);
+    const now = performance.now();
+    const remaining = this.vibrateUntil - now;
+    // Interrupt only for something bigger than what is already playing.
+    if (remaining > 0 && total <= remaining) return;
+
+    this.vibrateUntil = now + total;
+    navigator.vibrate(clamped);
   }
 
   private buildPad(): void {

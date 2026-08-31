@@ -4,6 +4,7 @@ import { LobbyScene } from './scenes/LobbyScene.js';
 import { GAMES } from './games.js';
 import { session } from './session.js';
 import { AxisRecorder } from './ui/AxisRecorder.js';
+import { unlockAudio } from './ui/audio.js';
 import { DebugOverlay } from './ui/DebugOverlay.js';
 
 /**
@@ -17,6 +18,10 @@ window.addEventListener('error', (event) => session.reportError(event.error ?? e
 window.addEventListener('unhandledrejection', (event) => session.reportError(event.reason));
 
 session.start();
+// The first sound this game makes is a ball being hit by a phone, over a
+// socket, with nobody having touched this machine. Chrome will not start an
+// audio context outside a gesture, so one is armed here rather than hoping.
+unlockAudio();
 
 const overlay = new DebugOverlay();
 overlay.start();
@@ -41,7 +46,7 @@ if (replayName !== null) {
     .catch((error: unknown) => session.reportError(error));
 }
 
-new Phaser.Game({
+const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'app',
   width: 1280,
@@ -52,5 +57,17 @@ new Phaser.Game({
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   // Games come from the registry, so adding one is a single edit there.
-  scene: [LobbyScene, CalibrationScene, ...GAMES.map((game) => game.scene)],
+  scene: [LobbyScene, CalibrationScene, ...GAMES.map((entry) => entry.scene)],
 });
+
+/**
+ * Dev-only handle on the running game.
+ *
+ * Two things need it. Driving the game from the console — starting a scene,
+ * reading its state — is how a rule change gets checked without a phone. And an
+ * automated browser can be missing requestAnimationFrame entirely, which stops
+ * Phaser's loop dead; `game.step` lets something else drive it instead.
+ */
+if (import.meta.env.DEV) {
+  Object.assign(window, { phonemote: { game, session } });
+}

@@ -42,7 +42,7 @@ export class PointerTest extends Phaser.Scene {
     this.add
       .text(width / 2, 24, '● 기울기   ✛ 자이로 포인터   ·   A 색 변경   HOME 재중심   ESC 로비', {
         fontFamily: 'system-ui, sans-serif',
-        fontSize: '18px',
+        fontSize: '24px',
         color: '#98a0b3',
       })
       .setOrigin(0.5, 0);
@@ -53,7 +53,7 @@ export class PointerTest extends Phaser.Scene {
     this.readout = this.add
       .text(width / 2, height - 20, '', {
         fontFamily: 'ui-monospace, monospace',
-        fontSize: '16px',
+        fontSize: '22px',
         color: '#98a0b3',
         align: 'center',
       })

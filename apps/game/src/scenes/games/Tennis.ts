@@ -38,6 +38,7 @@ export class Tennis extends Phaser.Scene {
   private rallyText!: Phaser.GameObjects.Text;
   private lastPhase: TennisState['phase'] = 'serve';
   private overSince = 0;
+  private lastShakeAt = 0;
   private waiting = false;
   private lastDelta = 1 / 60;
   private swingFeedback!: Phaser.GameObjects.Text;
@@ -82,9 +83,13 @@ export class Tennis extends Phaser.Scene {
         if (result.hit) {
           sfx.hit(power);
           session.vibrate(action.playerId, [Math.round(25 + power * 55)]);
-          // Only a genuinely hard shot is worth shaking the screen for; a long
-          // rally of small shakes is just noise.
-          if (power > 0.7) this.cameras.main.shake(90, 0.004 + power * 0.006);
+          // Only a genuinely hard shot is worth shaking the screen for, and
+          // never twice inside 200 ms: two shakes on top of each other read as
+          // the picture breaking rather than as the ball being hit hard.
+          if (power > 0.7 && this.time.now - this.lastShakeAt > 200) {
+            this.lastShakeAt = this.time.now;
+            this.cameras.main.shake(90, 0.004 + power * 0.006);
+          }
           this.showSwingFeedback('맞음', '#2ed573', side);
           session.log(
             `타격 P${side} ${Math.round(action.peakRate)}°/s (파워 ${power.toFixed(2)}) ` +
@@ -255,7 +260,7 @@ export class Tennis extends Phaser.Scene {
     this.rallyText = this.add
       .text(width / 2, this.scale.height - 26, '', {
         fontFamily: 'system-ui, sans-serif',
-        fontSize: '18px',
+        fontSize: '24px',
         color: '#98a0b3',
       })
       .setOrigin(0.5, 1);
@@ -272,7 +277,7 @@ export class Tennis extends Phaser.Scene {
     this.modeText = this.add
       .text(18, 18, '', {
         fontFamily: 'system-ui, sans-serif',
-        fontSize: '18px',
+        fontSize: '22px',
         color: '#98a0b3',
       })
       .setOrigin(0, 0);
