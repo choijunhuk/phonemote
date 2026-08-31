@@ -1,3 +1,4 @@
+import { OneEuroFilter } from './OneEuroFilter.js';
 import type { CanonicalSensorFrame } from './types.js';
 
 /**
@@ -22,6 +23,11 @@ export interface PointerPosition {
 
 /** A 60 degree sweep crosses the screen once. */
 export const DEFAULT_POINTER_SENSITIVITY = 1 / 60;
+/**
+ * Measured noise on a still phone is about 3.1 deg/s, so a deadzone alone
+ * cannot separate a hand from the sensor without also swallowing slow aiming.
+ * The filter does that work; this only removes the last of the shiver.
+ */
 export const DEFAULT_POINTER_DEADZONE = 2;
 
 /**
@@ -40,6 +46,8 @@ function clamp01(value: number): number {
 export class PointerMode {
   private readonly sensitivity: number;
   private readonly deadzone: number;
+  private readonly yawFilter = new OneEuroFilter();
+  private readonly pitchFilter = new OneEuroFilter();
   private x = CENTRE.x;
   private y = CENTRE.y;
 
@@ -55,6 +63,8 @@ export class PointerMode {
   reset(): void {
     this.x = CENTRE.x;
     this.y = CENTRE.y;
+    this.yawFilter.reset();
+    this.pitchFilter.reset();
   }
 
   private applyDeadzone(rate: number): number {
@@ -65,8 +75,10 @@ export class PointerMode {
     if (frame.dt <= 0) return this.position;
 
     const dt = Math.min(frame.dt, MAX_POINTER_STEP_SECONDS);
-    const yaw = this.applyDeadzone(frame.angularVelocity.yaw);
-    const pitch = this.applyDeadzone(frame.angularVelocity.pitch);
+    // Filter first, then deadzone: the filter is what separates a hand from
+    // sensor noise, and the deadzone only has to mop up what is left.
+    const yaw = this.applyDeadzone(this.yawFilter.filter(frame.angularVelocity.yaw, dt));
+    const pitch = this.applyDeadzone(this.pitchFilter.filter(frame.angularVelocity.pitch, dt));
 
     this.x = clamp01(this.x + yaw * dt * this.sensitivity);
     // Screen y grows downwards, aiming up must move the cursor up.
