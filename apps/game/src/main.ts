@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { CalibrationScene } from './scenes/CalibrationScene.js';
 import { LobbyScene } from './scenes/LobbyScene.js';
-import { GAMES } from './games.js';
+import { gameScenes } from './sceneTable.js';
 import { session } from './session.js';
 import { AxisRecorder } from './ui/AxisRecorder.js';
 import { unlockAudio } from './ui/audio.js';
@@ -57,7 +57,7 @@ const game = new Phaser.Game({
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   // Games come from the registry, so adding one is a single edit there.
-  scene: [LobbyScene, CalibrationScene, ...GAMES.map((entry) => entry.scene)],
+  scene: [LobbyScene, CalibrationScene, ...gameScenes()],
 });
 
 /**

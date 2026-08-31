@@ -1,7 +1,14 @@
 import Phaser from 'phaser';
 import QRCode from 'qrcode';
 import { session } from '../session.js';
-import { GAMES, type GameDefinition } from '../games.js';
+import {
+  GAMES,
+  defaultMode,
+  playersLabel,
+  type GameDefinition,
+  type GameMode,
+} from '../games.js';
+import { columnsFor, layoutTiles, moveFocus } from './lobbyLayout.js';
 
 /**
  * Lobby: how to join, who has joined, and what to play.
@@ -19,7 +26,10 @@ interface Tile {
   readonly game: GameDefinition;
   readonly container: Phaser.GameObjects.Container;
   readonly panel: Phaser.GameObjects.Rectangle;
+  readonly modeText: Phaser.GameObjects.Text;
   readonly centre: { x: number; y: number };
+  /** Which of this game's modes is chosen. Left and right move through them. */
+  mode: number;
 }
 
 export class LobbyScene extends Phaser.Scene {
@@ -29,6 +39,7 @@ export class LobbyScene extends Phaser.Scene {
   private cursor!: Phaser.GameObjects.Arc;
   private tiles: Tile[] = [];
   private selected = 0;
+  private columns = 1;
   private qrShown = false;
   private cleanups: Array<() => void> = [];
 
@@ -38,6 +49,13 @@ export class LobbyScene extends Phaser.Scene {
 
   create(): void {
     const { width, height } = this.scale;
+    // Phaser reuses the scene instance, so these outlive a restart unless they
+    // are cleared here. qrShown surviving is why the lobby lost its QR code and
+    // its controller URL for the rest of the session after the first game.
+    this.qrShown = false;
+    this.selected = 0;
+    this.tiles = [];
+    this.slotTexts = [];
     // The pointer drives the menu, so it has to be on before a game is chosen.
     session.configureInput({ pointer: {} });
 
@@ -99,12 +117,19 @@ export class LobbyScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-UP', () => this.move(-1));
     this.input.keyboard?.on('keydown-ENTER', () => this.launch());
     this.input.keyboard?.on('keydown-SPACE', () => this.launch());
-    for (const [index] of GAMES.entries()) {
-      this.input.keyboard?.on(`keydown-${['ONE', 'TWO', 'THREE', 'FOUR'][index] ?? 'ONE'}`, () => {
+    // Only as many number keys as there are names for. The old fallback of
+    // 'ONE' meant every game past the fourth registered another handler on the
+    // same key, so pressing 1 fired all of them and the last one won.
+    const NUMBER_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE'];
+    NUMBER_KEYS.forEach((name, index) => {
+      if (index >= GAMES.length) return;
+      this.input.keyboard?.on(`keydown-${name}`, () => {
         this.selected = index;
         this.launch();
       });
-    }
+    });
+    this.input.keyboard?.on('keydown-LEFT', () => this.cycleMode(-1));
+    this.input.keyboard?.on('keydown-RIGHT', () => this.cycleMode(1));
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       for (const cleanup of this.cleanups) cleanup();
@@ -133,49 +158,104 @@ export class LobbyScene extends Phaser.Scene {
 
   private buildMenu(): void {
     const { width, height } = this.scale;
-    const tileWidth = width * 0.42;
-    const tileHeight = 96;
+    // A grid, because a column runs off the bottom: at nine games the fifth
+    // tile landed at y=728 on a 720-high canvas and the ninth at y=1070, where
+    // no pointer could ever reach them.
+    this.columns = columnsFor(GAMES.length);
+    const placed = layoutTiles({
+      width,
+      height,
+      count: GAMES.length,
+      // The left half belongs to the room code, the QR and the player slots.
+      left: width * 0.46,
+      right: 24,
+      top: height * 0.16,
+      bottom: 72,
+    });
 
     this.tiles = GAMES.map((game, index) => {
-      const centre = { x: width * 0.7, y: height * 0.22 + index * (tileHeight + 18) };
+      const box = placed[index];
+      const centre = { x: box?.x ?? width / 2, y: box?.y ?? height / 2 };
+      const tileWidth = box?.width ?? 300;
+      const tileHeight = box?.height ?? 96;
+
       const panel = this.add
         .rectangle(0, 0, tileWidth, tileHeight, 0x171b24)
         .setStrokeStyle(2, 0x2c3242);
       const title = this.add
-        .text(-tileWidth / 2 + 24, -22, `${index + 1}. ${game.title}`, {
+        .text(-tileWidth / 2 + 18, -tileHeight / 2 + 10, `${index + 1}. ${game.title}`, {
           fontFamily: 'system-ui, sans-serif',
-          fontSize: '28px',
+          fontSize: '26px',
           color: '#f1f3f8',
         })
         .setOrigin(0, 0);
       const blurb = this.add
-        .text(-tileWidth / 2 + 24, 14, game.blurb, {
+        .text(-tileWidth / 2 + 18, -tileHeight / 2 + 42, game.blurb, {
           fontFamily: 'system-ui, sans-serif',
-          fontSize: '22px',
+          fontSize: '19px',
           color: '#98a0b3',
+          wordWrap: { width: tileWidth - 36 },
         })
         .setOrigin(0, 0);
-      // On the title's row, not the blurb's: at a size readable across a room
-      // the two shared a line and printed on top of each other.
       const players = this.add
-        .text(tileWidth / 2 - 24, -18, game.players, {
+        .text(tileWidth / 2 - 18, -tileHeight / 2 + 12, playersLabel(game), {
           fontFamily: 'system-ui, sans-serif',
-          fontSize: '22px',
+          fontSize: '20px',
           color: '#98a0b3',
         })
         .setOrigin(1, 0);
+      // The mode line is the whole point of the redesign: it is where a player
+      // sees that practice exists at all.
+      const modeText = this.add
+        .text(-tileWidth / 2 + 18, tileHeight / 2 - 28, '', {
+          fontFamily: 'system-ui, sans-serif',
+          fontSize: '20px',
+          color: '#2ed573',
+          wordWrap: { width: tileWidth - 36 },
+        })
+        .setOrigin(0, 0);
 
       return {
         game,
         panel,
+        modeText,
         centre,
-        container: this.add.container(centre.x, centre.y, [panel, title, blurb, players]),
+        // Whatever suits the room right now, so the common case needs no
+        // fiddling: one phone lands on something one person can play.
+        mode: Math.max(
+          0,
+          game.modes.indexOf(defaultMode(game, session.presentPlayers.length)),
+        ),
+        container: this.add.container(centre.x, centre.y, [panel, title, blurb, players, modeText]),
       };
     });
   }
 
   private move(step: number): void {
-    this.selected = (this.selected + step + this.tiles.length) % this.tiles.length;
+    this.selected = moveFocus(
+      this.selected,
+      this.tiles.length,
+      this.columns,
+      step > 0 ? 'down' : 'up',
+    );
+  }
+
+  /**
+   * Move through this game's modes.
+   *
+   * Modes that the room cannot fill are still shown, greyed, with the reason.
+   * A menu entry that silently disappears when a phone drops reads as the app
+   * breaking, not as a rule.
+   */
+  private cycleMode(step: number): void {
+    const tile = this.tiles[this.selected];
+    if (!tile) return;
+    const count = tile.game.modes.length;
+    tile.mode = (tile.mode + step + count) % count;
+  }
+
+  private modeOf(tile: Tile): GameMode | undefined {
+    return tile.game.modes[tile.mode];
   }
 
   /** Snap to the nearest tile rather than requiring the cursor to sit inside one. */
@@ -194,16 +274,25 @@ export class LobbyScene extends Phaser.Scene {
 
   private launch(): void {
     const tile = this.tiles[this.selected];
-    if (!tile) return;
+    const mode = tile ? this.modeOf(tile) : undefined;
+    if (!tile || !mode) return;
+
+    const present = session.presentPlayers.length;
+    if (present > mode.maxPlayers) {
+      session.log(`${tile.game.key}/${mode.key}: 최대 ${mode.maxPlayers}명`);
+      return;
+    }
+    // Below the minimum is allowed from the keyboard, because the keyboard
+    // stand-ins are how this is played with no phone in the room at all.
 
     // Input is configured before the scene starts, so its very first frame is
     // already the right shape.
-    session.configureInput(tile.game.input);
-    session.log(`게임 시작 ${tile.game.key}`);
-    this.scene.start(
-      tile.game.calibration ? 'calibration' : tile.game.key,
-      tile.game.calibration ? { next: tile.game.key } : undefined,
-    );
+    session.configureInput(mode.input);
+    session.log(`게임 시작 ${tile.game.key} (${mode.key})`);
+    this.scene.start(tile.game.calibration ? 'calibration' : tile.game.key, {
+      mode: mode.key,
+      next: tile.game.key,
+    });
   }
 
   private refresh(): void {
@@ -228,17 +317,35 @@ export class LobbyScene extends Phaser.Scene {
       }
     });
 
+    const present = session.presentPlayers.length;
     this.tiles.forEach((tile, index) => {
       const chosen = index === this.selected;
       tile.panel.setStrokeStyle(chosen ? 3 : 2, chosen ? 0x2ed573 : 0x2c3242);
       tile.panel.setFillStyle(chosen ? 0x1d2430 : 0x171b24);
+
+      const mode = this.modeOf(tile);
+      if (!mode) return;
+      // Said out loud rather than hidden: a mode that vanishes when a phone
+      // drops reads as the app breaking.
+      const short = present < mode.minPlayers;
+      const many = present > mode.maxPlayers;
+      const label = tile.game.modes.length > 1 ? `◀ ${mode.title} ▶` : mode.title;
+      tile.modeText
+        .setText(
+          short
+            ? `${label} — ${mode.minPlayers}명 필요, 지금 ${present}명`
+            : many
+              ? `${label} — 최대 ${mode.maxPlayers}명`
+              : `${label} — ${mode.detail}`,
+        )
+        .setColor(short || many ? '#6f7994' : chosen ? '#2ed573' : '#98a0b3');
     });
 
     this.cursor.setVisible(players.length > 0);
     this.hintText.setText(
       players.length === 0
-        ? '폰을 연결하거나, 키보드 ↑↓ + Enter 로 바로 시작할 수 있습니다'
-        : '폰을 겨눠 고르고 A로 시작   ·   B 다음 항목   ·   키보드 ↑↓ Enter   ·   r 축 측정',
+        ? '폰을 연결하거나, 키보드 ↑↓←→ + Enter 로 바로 시작할 수 있습니다'
+        : '폰을 겨눠 고르고 A로 시작   ·   ←→ 모드 선택   ·   B 다음 항목   ·   Alt+R 축 측정',
     );
   }
 

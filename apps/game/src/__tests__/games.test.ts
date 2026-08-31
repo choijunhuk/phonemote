@@ -1,46 +1,21 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { GAMES, defaultMode, gameByKey, modeByKey, playersLabel } from '../games.js';
 
 /**
- * The registry promises that its key is the scene's key. Nothing at runtime
- * checks that, and getting it wrong means a menu entry that starts nothing.
+ * What the registry promises the rest of the app.
  *
- * Phaser reaches for a canvas as soon as it is imported, which no headless
- * environment has, so it is replaced with a stub that records the key each
- * scene passes to super(). That is the only part of Phaser this contract
- * depends on.
+ * These used to need a Phaser stub, because the registry held scene classes and
+ * importing Phaser reaches for a canvas no headless environment has. The stub
+ * then had to grow whatever Phaser API any scene happened to touch at module
+ * scope, and a new game could fail this file for reasons that had nothing to do
+ * with the registry. The data lives apart from the wiring now (sceneTable.ts),
+ * so this asks only about the data.
  */
-
-vi.mock('phaser', () => {
-  class Scene {
-    constructor(readonly sceneKey: string) {}
-  }
-  return {
-    default: {
-      Scene,
-      Scenes: { Events: { SHUTDOWN: 'shutdown' } },
-      Math: { Linear: (a: number) => a },
-      AUTO: 0,
-      Scale: { FIT: 0, CENTER_BOTH: 0 },
-    },
-  };
-});
-
-const { GAMES, gameByKey } = await import('../games.js');
-
-function sceneKey(definition: (typeof GAMES)[number]): string {
-  return (new definition.scene() as unknown as { sceneKey: string }).sceneKey;
-}
 
 describe('the game registry', () => {
   it('has a unique key per game', () => {
     const keys = GAMES.map((game) => game.key);
     expect(new Set(keys).size).toBe(keys.length);
-  });
-
-  it('uses each scene’s own key', () => {
-    for (const game of GAMES) {
-      expect(sceneKey(game)).toBe(game.key);
-    }
   });
 
   it('does not collide with the two scenes that are not games', () => {
@@ -53,13 +28,47 @@ describe('the game registry', () => {
     for (const game of GAMES) {
       expect(game.title.length).toBeGreaterThan(0);
       expect(game.blurb.length).toBeGreaterThan(0);
-      expect(game.players).toMatch(/명/);
+      expect(playersLabel(game)).toMatch(/명/);
     }
   });
 
-  it('looks a game up by key', () => {
-    expect(gameByKey('freeze-frame')?.title).toBe('Freeze Frame');
-    expect(gameByKey('nope')).toBeUndefined();
+  it('gives every game a practice mode, with no exception', () => {
+    // A conditional rule does not get kept. The tool declares one too: it is
+    // the screen where a player finds out what their own movement looks like,
+    // which is the thing this platform is worst at telling them.
+    for (const game of GAMES) {
+      expect(modeByKey(game, 'practice'), game.key).toBeDefined();
+    }
+  });
+
+  it('gives every game something one person alone can start', () => {
+    for (const game of GAMES) {
+      const solo = game.modes.filter((mode) => mode.minPlayers <= 1);
+      expect(solo.length, game.key).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps every mode inside what the room can hold', () => {
+    for (const game of GAMES) {
+      for (const mode of game.modes) {
+        expect(mode.minPlayers, `${game.key}/${mode.key}`).toBeGreaterThanOrEqual(1);
+        expect(mode.minPlayers, `${game.key}/${mode.key}`).toBeLessThanOrEqual(mode.maxPlayers);
+        // Four is the relay's slot limit, so a mode asking for five could never
+        // be started and would sit in the menu forever.
+        expect(mode.maxPlayers, `${game.key}/${mode.key}`).toBeLessThanOrEqual(4);
+      }
+    }
+  });
+
+  it('names every mode uniquely within its game, and says what it is', () => {
+    for (const game of GAMES) {
+      const keys = game.modes.map((mode) => mode.key);
+      expect(new Set(keys).size, game.key).toBe(keys.length);
+      for (const mode of game.modes) {
+        expect(mode.title.length, `${game.key}/${mode.key}`).toBeGreaterThan(0);
+        expect(mode.detail.length, `${game.key}/${mode.key}`).toBeGreaterThan(0);
+      }
+    }
   });
 
   it('asks for calibration only where tilt is actually used', () => {
@@ -67,7 +76,36 @@ describe('the game registry', () => {
       if (!game.calibration) continue;
       // Calibration centres the tilt axes; requiring it without tilt would be
       // the ceremony the calibration screen used to be.
-      expect(game.input.tilt).toBeDefined();
+      expect(game.modes.some((mode) => mode.input.tilt !== undefined), game.key).toBe(true);
+    }
+  });
+
+  it('looks a game up by key', () => {
+    expect(gameByKey('freeze-frame')?.title).toBe('Freeze Frame');
+    expect(gameByKey('nope')).toBeUndefined();
+  });
+});
+
+describe('offering the right mode for the room', () => {
+  it('offers a real game rather than practice when the phones are there', () => {
+    const tennis = gameByKey('tennis');
+    expect(tennis).toBeDefined();
+    if (!tennis) return;
+    expect(defaultMode(tennis, 2).key).toBe('versus');
+  });
+
+  it('falls back to what one person can actually start', () => {
+    const tennis = gameByKey('tennis');
+    expect(tennis).toBeDefined();
+    if (!tennis) return;
+    expect(defaultMode(tennis, 1).key).toBe('practice');
+  });
+
+  it('always returns something, even for a room that fits no mode', () => {
+    for (const game of GAMES) {
+      for (const count of [0, 1, 2, 3, 4, 9]) {
+        expect(defaultMode(game, count).key.length, `${game.key}/${count}`).toBeGreaterThan(0);
+      }
     }
   });
 });

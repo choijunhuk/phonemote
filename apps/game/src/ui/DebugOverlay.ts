@@ -26,8 +26,11 @@ export class DebugOverlay {
     this.element.className = 'debug-overlay';
     parent.append(this.element);
 
+    // Alt again: the bare digits are the lobby's launch keys and the fourth
+    // keyboard stand-in's whole button pad, and this listener is global.
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'd') this.toggle();
+      if (event.altKey && event.key.toLowerCase() === 'd') this.toggle();
+      if (!event.altKey) return;
       const digit = Number(event.key);
       if (Number.isInteger(digit) && digit >= 1 && digit <= 4) this.selected = digit;
     });
@@ -48,7 +51,7 @@ export class DebugOverlay {
 
     const info = session.debugInfo(this.selected);
     const header =
-      `player ${this.selected}  (1-4 to switch, d to hide)` +
+      `player ${this.selected}  (alt+1-4 to switch, alt+d to hide)` +
       (session.status ? `
 장면     ${session.status}` : '') +
       (session.lastError ? `

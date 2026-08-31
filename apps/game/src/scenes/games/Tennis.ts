@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { session } from '../../session.js';
+import { BaseGameScene } from './BaseGameScene.js';
+import type { GameAction } from '../../input/types.js';
 import { sfx } from '../../ui/audio.js';
 import {
   HIT_ZONE,
@@ -27,7 +29,7 @@ const MISS_TEXT = {
   'not-your-turn': '상대 서브',
 } as const;
 
-export class Tennis extends Phaser.Scene {
+export class Tennis extends BaseGameScene {
   private state: TennisState = createTennis();
   private lastPlayerCount = 0;
   private ball!: Phaser.GameObjects.Arc;
@@ -37,29 +39,30 @@ export class Tennis extends Phaser.Scene {
   private phaseText!: Phaser.GameObjects.Text;
   private rallyText!: Phaser.GameObjects.Text;
   private lastPhase: TennisState['phase'] = 'serve';
-  private overSince = 0;
   private lastShakeAt = 0;
   private waiting = false;
-  private lastDelta = 1 / 60;
   private swingFeedback!: Phaser.GameObjects.Text;
   private modeText!: Phaser.GameObjects.Text;
-  private cleanup: (() => void) | null = null;
+  private readingText!: Phaser.GameObjects.Text;
 
   constructor() {
     super('tennis');
   }
 
-  create(): void {
-    session.configureInput({ swing: true });
-
-    const players = session.players;
-    this.lastPlayerCount = players.length;
-    this.state = createTennis({ players: players.length >= 2 ? 2 : 1 });
+  protected build(): void {
+    // The mode comes from the lobby now. Guessing it from the number of
+    // connected phones meant two phones could never practise and one phone
+    // could never play a match (ARCHITECTURE.md 7.4).
+    this.state = createTennis({ players: this.mode === 'versus' ? 2 : 1 });
+    this.lastPlayerCount = session.presentPlayers.length;
     this.lastPhase = this.state.phase;
-
+    this.waiting = false;
+    this.lastShakeAt = 0;
     this.drawCourt();
+  }
 
-    this.cleanup = session.onAction((action) => {
+  protected override onGameAction(action: GameAction): void {
+    {
       if (action.kind === 'swing') {
         // Resolved per swing: a phone that joined after this scene started, or
         // rejoined with a new id, would otherwise have every swing silently
@@ -80,6 +83,13 @@ export class Tennis extends Phaser.Scene {
         // where a real swing begins, so it was 1.0 every time and every hit
         // sounded, buzzed and shook identically.
         const power = swingPower(action.peakRate);
+        if (this.mode === 'practice') {
+          this.readingText.setText(
+            `속도 ${Math.round(action.peakRate)}°/s   파워 ${power.toFixed(2)}   ` +
+              `방향 ${action.direction8}   회전 y${action.rotation.yaw.toFixed(0)} ` +
+              `p${action.rotation.pitch.toFixed(0)} r${action.rotation.roll.toFixed(0)}`,
+          );
+        }
         if (result.hit) {
           sfx.hit(power);
           session.vibrate(action.playerId, [Math.round(25 + power * 55)]);
@@ -111,27 +121,20 @@ export class Tennis extends Phaser.Scene {
         }
         return;
       }
-      if (action.kind === 'button_down' && action.button === 'HOME') this.scene.start('lobby');
       if (action.kind === 'button_down' && action.button === 'A' && this.state.phase === 'gameover') {
         this.scene.start('lobby');
       }
-    });
-
-    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('lobby'));
-
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.cleanup?.();
-      this.cleanup = null;
-      this.rackets.clear();
-    });
+    }
   }
 
-  override update(_time: number, delta: number): void {
-    // A stutter or a backgrounded tab hands us a huge delta; integrating it
-    // whole would jump the ball across a side of the court and score a point
-    // nobody played.
-    const dt = Math.min(delta / 1000, 1 / 30);
+  protected override teardown(): void {
+    this.rackets.clear();
+    // The bands were left holding destroyed objects, which the next run then
+    // wrote to.
+    this.bands.clear();
+  }
 
+  protected step(dt: number): void {
     if (session.presentPlayers.length !== this.lastPlayerCount) {
       session.log(`플레이어 ${this.lastPlayerCount} → ${session.presentPlayers.length}`);
       this.lastPlayerCount = session.presentPlayers.length;
@@ -149,22 +152,15 @@ export class Tennis extends Phaser.Scene {
       return;
     }
 
-    this.lastDelta = dt;
     const before = this.state.ball.vx;
     step(this.state, dt);
 
     // The wall in practice mode reverses the ball without anyone swinging.
     if (this.state.config.players === 1 && before > 0 && this.state.ball.vx < 0) sfx.wall();
 
-    if (this.state.phase === 'gameover') {
-      // Never a dead screen. A match that ended while everyone had put their
-      // phone down would otherwise sit there until somebody found a keyboard.
-      this.overSince += dt;
-      if (this.overSince > 8) {
-        this.scene.start('lobby');
-        return;
-      }
-    }
+    // Never a dead screen: a match that ended while everyone had put their
+    // phone down would otherwise sit there until somebody found a keyboard.
+    if (this.state.phase === 'gameover') this.returnToLobbyAfter(8);
 
     if (this.state.phase !== this.lastPhase) {
       if (this.state.phase === 'point') {
@@ -286,9 +282,21 @@ export class Tennis extends Phaser.Scene {
       .setOrigin(0, 0);
     this.modeText.setText(
       this.state.config.players === 1
-        ? '연습 (벽치기) — 폰 1대'
-        : `대전 — P1 vs P2 (폰 ${session.players.length}대)`,
+        ? '연습 (벽치기)'
+        : `대전 — P1 vs P2 (폰 ${session.presentPlayers.length}대)`,
     );
+
+    // Practice shows the numbers behind the shot. A player who cannot see what
+    // their own swing measured has no way to tell a bad swing from a swing the
+    // game never saw, which is the complaint this whole platform keeps hearing.
+    this.readingText = this.add
+      .text(18, 46, '', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '20px',
+        color: '#98a0b3',
+      })
+      .setOrigin(0, 0)
+      .setVisible(this.mode === 'practice');
   }
 
   private sideFor(playerId: number): Side | null {

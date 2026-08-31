@@ -1,8 +1,11 @@
 import { BUTTON, type ButtonName, type SensorFrame } from '@phonemote/protocol';
 import { ComplementaryFilter, type FusionOptions } from './ComplementaryFilter.js';
+import { GyroBias } from './GyroBias.js';
+import { Stillness, type StillnessOptions } from './Stillness.js';
+import { StrokeDetector, type StrokeOptions } from './StrokeDetector.js';
 import { normalize } from './SensorNormalizer.js';
 import { PointerMode, type PointerOptions } from './PointerMode.js';
-import { SwingDetector } from './SwingDetector.js';
+import { SwingDetector, type PowerScale } from './SwingDetector.js';
 import { TiltMode, type TiltOptions } from './TiltMode.js';
 import type { CanonicalAngles, CanonicalSensorFrame, GameAction } from './types.js';
 
@@ -27,6 +30,26 @@ export interface InputMapperConfig {
    * showing the unfused canonical values, so the axis check stays honest.
    */
   readonly fusion?: FusionOptions | false;
+  /**
+   * Report how still the phone is being held, every frame.
+   *
+   * Games use it three ways: judging stillness outright, measuring aim wobble,
+   * and taking a grip reference without asking for a button press.
+   */
+  readonly stillness?: StillnessOptions | boolean;
+  /**
+   * Emit a `release` action when the trigger is let go, carrying the motion
+   * under way at that instant (ARCHITECTURE.md D49).
+   */
+  readonly release?: boolean;
+  /**
+   * Detect slow, deliberate out-and-back gestures — a putt, a half swing.
+   *
+   * The swing detector starts at 400 deg/s because below that lies every
+   * accidental wobble. A putting stroke has no threshold to cross at all, only
+   * a point where it turns around.
+   */
+  readonly stroke?: StrokeOptions | boolean;
 }
 
 export interface PlayerInputState {
@@ -50,7 +73,13 @@ interface PlayerState {
   swing: SwingDetector | null;
   tilt: TiltMode | null;
   fusion: ComplementaryFilter | null;
+  stillness: Stillness | null;
+  stroke: StrokeDetector | null;
+  /** Always on: every consumer downstream benefits and nothing wants the bias. */
+  bias: GyroBias;
   calibrationPending: boolean;
+  /** Set while the trigger is held, for the release action. */
+  trigger: { at: number; yaw: number; pitch: number; roll: number } | null;
 }
 
 export class InputMapper {
@@ -72,6 +101,18 @@ export class InputMapper {
     return this.config.fusion === false ? null : new ComplementaryFilter(this.config.fusion);
   }
 
+  private makeStroke(): StrokeDetector | null {
+    const { stroke } = this.config;
+    if (stroke === undefined || stroke === false) return null;
+    return new StrokeDetector(stroke === true ? {} : stroke);
+  }
+
+  private makeStillness(): Stillness | null {
+    const { stillness } = this.config;
+    if (stillness === undefined || stillness === false) return null;
+    return new Stillness(stillness === true ? {} : stillness);
+  }
+
   private stateFor(playerId: number): PlayerState {
     const existing = this.players.get(playerId);
     if (existing) return existing;
@@ -88,7 +129,11 @@ export class InputMapper {
       swing: this.config.swing === true ? new SwingDetector() : null,
       tilt: this.makeTilt(),
       fusion: this.makeFusion(),
+      stillness: this.makeStillness(),
+      stroke: this.makeStroke(),
+      bias: new GyroBias(),
       calibrationPending: false,
+      trigger: null,
     };
     this.players.set(playerId, created);
     return created;
@@ -111,7 +156,20 @@ export class InputMapper {
       state.swing = this.config.swing === true ? (state.swing ?? new SwingDetector()) : null;
       state.tilt = this.makeTilt() === null ? null : (state.tilt ?? this.makeTilt());
       state.fusion = this.config.fusion === false ? null : (state.fusion ?? this.makeFusion());
+      state.stillness = this.makeStillness() === null ? null : (state.stillness ?? new Stillness());
+      state.stroke = this.makeStroke();
     }
+  }
+
+  /**
+   * How hard this player's hardest swing actually is.
+   *
+   * The same person's six hardest swings measured 297 to 1211 deg/s, so one
+   * scale for everybody leaves some players permanently at full power and
+   * others permanently at none (ARCHITECTURE.md D42).
+   */
+  setPowerScale(playerId: number, scale: PowerScale): void {
+    this.stateFor(playerId).swing?.setPowerScale(scale);
   }
 
   /** Takes the next frame from this player as the tilt centre. */
@@ -160,6 +218,34 @@ export class InputMapper {
       });
       // HOME re-centres the pointer; drift is expected and this is the cure.
       if (isDown && name === 'HOME') state.pointer?.reset();
+
+      if (name === 'TRIGGER' && this.config.release === true) {
+        if (isDown) {
+          state.trigger = { at: frame.timestamp, yaw: 0, pitch: 0, roll: 0 };
+        } else if (state.trigger) {
+          // The motion under way at the instant the ball left the hand. A
+          // bowling delivery may never cross the swing threshold at all — one
+          // of six recorded hard swings peaked at 297 deg/s — so this is a
+          // measurement, not an inference (ARCHITECTURE.md D49).
+          const held = state.trigger;
+          const last = state.lastCanonical;
+          actions.push({
+            kind: 'release',
+            playerId: frame.playerId,
+            at: frame.timestamp,
+            rate: last
+              ? Math.hypot(
+                  last.angularVelocity.yaw,
+                  last.angularVelocity.pitch,
+                  last.angularVelocity.roll,
+                )
+              : 0,
+            rotation: { yaw: held.yaw, pitch: held.pitch, roll: held.roll },
+            heldMs: Math.max(0, frame.timestamp - held.at),
+          });
+          state.trigger = null;
+        }
+      }
     }
     state.buttons = frame.buttons;
 
@@ -172,10 +258,51 @@ export class InputMapper {
     state.lastMotionSeq = frame.motionSeq;
     if (stale) return actions;
 
-    const canonical = normalize(frame, state.lastTimestamp, state.lastRate);
+    const measured = normalize(frame, state.lastTimestamp, state.lastRate);
+    // Bias is removed before anything integrates: a 0.44 deg/s yaw offset walks
+    // the cursor half a screen in about a minute, and the measured drift on a
+    // hand held still was already 0.0166 screen widths per second
+    // (ARCHITECTURE.md D44).
+    const corrected = state.bias.update(measured.angularVelocity, measured.dt);
+    const canonical: CanonicalSensorFrame = {
+      ...measured,
+      angularVelocity: corrected,
+      rateStep:
+        measured.rateStep === undefined
+          ? corrected
+          : {
+              yaw: measured.rateStep.yaw - (measured.angularVelocity.yaw - corrected.yaw),
+              pitch: measured.rateStep.pitch - (measured.angularVelocity.pitch - corrected.pitch),
+              roll: measured.rateStep.roll - (measured.angularVelocity.roll - corrected.roll),
+            },
+    };
     state.lastTimestamp = frame.timestamp;
-    state.lastRate = canonical.angularVelocity;
+    // The uncorrected rate, so the trapezoid step is built from like and like.
+    state.lastRate = measured.angularVelocity;
     state.lastCanonical = canonical;
+
+    // The trigger is held across many frames, so what it accumulates is the
+    // delivery: how far the arm swung between grabbing and letting go.
+    if (state.trigger) {
+      const step = canonical.rateStep ?? canonical.angularVelocity;
+      state.trigger.yaw += step.yaw * canonical.dt;
+      state.trigger.pitch += step.pitch * canonical.dt;
+      state.trigger.roll += step.roll * canonical.dt;
+    }
+
+    if (state.stillness) {
+      const reading = state.stillness.update(canonical.angularVelocity, canonical.dt);
+      actions.push({
+        kind: 'stillness',
+        playerId: canonical.playerId,
+        rate: reading.rate,
+        still: reading.still,
+        steadyMs: reading.steadyMs,
+        // A phone that stopped sending is not a phone being held still, and
+        // this is the only layer that can tell those apart.
+        stalled: state.stalled,
+      });
+    }
 
     // Modes read the fused pose; the raw canonical one is kept for the overlay.
     const fused = state.fusion
@@ -205,6 +332,11 @@ export class InputMapper {
     if (state.swing) {
       const swing = state.swing.update(fused);
       if (swing) actions.push({ kind: 'swing', ...swing });
+    }
+
+    if (state.stroke) {
+      const stroke = state.stroke.update(fused);
+      if (stroke) actions.push({ kind: 'stroke', ...stroke });
     }
 
     return actions;

@@ -124,8 +124,11 @@ export class AxisRecorder {
     this.element.style.display = 'none';
     parent.append(this.element);
 
+    // Alt, because a bare letter is somebody's button: 'r' is the second
+    // keyboard stand-in's B, and this listener fires in every scene. A dev tool
+    // firing in the middle of a game is worse than a dev tool nobody finds.
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'r' && !this.running) void this.run();
+      if (event.altKey && event.key.toLowerCase() === 'r' && !this.running) void this.run();
     });
   }
 

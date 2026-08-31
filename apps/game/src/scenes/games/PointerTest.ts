@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { session } from '../../session.js';
+import { BaseGameScene } from './BaseGameScene.js';
+import type { GameAction } from '../../input/types.js';
 
 /**
  * Phase 1 sanity check: a tilt dot, a gyro pointer, and the numbers that say
@@ -24,23 +26,24 @@ interface PointerTrack {
   restedFrom: { x: number; y: number };
 }
 
-export class PointerTest extends Phaser.Scene {
+export class PointerTest extends BaseGameScene {
   private readonly dots = new Map<number, Phaser.GameObjects.Arc>();
   private readonly pointers = new Map<number, PointerTrack>();
   private readonly colorIndex = new Map<number, number>();
   private readout!: Phaser.GameObjects.Text;
-  private cleanup: (() => void) | null = null;
+  private stillnessText!: Phaser.GameObjects.Text;
+  private lastStillness = '';
 
   constructor() {
     super('pointer-test');
   }
 
-  create(): void {
+  protected build(): void {
     const { width, height } = this.scale;
-    session.configureInput({ tilt: {}, pointer: {}, swing: true });
+    this.lastStillness = '';
 
     this.add
-      .text(width / 2, 24, '● 기울기   ✛ 자이로 포인터   ·   A 색 변경   HOME 재중심   ESC 로비', {
+      .text(width / 2, 24, '● 기울기   ✛ 자이로 포인터   ·   A 색 변경   B 재중심   HOME/ESC 로비', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '24px',
         color: '#98a0b3',
@@ -59,7 +62,18 @@ export class PointerTest extends Phaser.Scene {
       })
       .setOrigin(0.5, 1);
 
-    this.cleanup = session.onAction((action) => {
+    this.stillnessText = this.add
+      .text(width / 2, 96, '', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '22px',
+        color: '#98a0b3',
+      })
+      .setOrigin(0.5, 0);
+  }
+
+  protected override onGameAction(action: GameAction): void {
+    const { width, height } = this.scale;
+    {
       switch (action.kind) {
         case 'tilt': {
           const dot = this.dotFor(action.playerId);
@@ -76,7 +90,19 @@ export class PointerTest extends Phaser.Scene {
         }
         case 'button_down': {
           if (action.button === 'A') this.cycleColor(action.playerId);
-          if (action.button === 'HOME') this.resetDrift(action.playerId);
+          // HOME leaves for the lobby in every game, so re-centring moved to B.
+          // Two meanings for the same button across nine games is not something
+          // a player holding a phone across the room can be asked to remember.
+          if (action.button === 'B') this.resetDrift(action.playerId);
+          break;
+        }
+        case 'stillness': {
+          // The number behind "hold it steady": what the phone actually reads
+          // while the player believes they are holding still.
+          this.lastStillness =
+            `P${action.playerId}  흔들림 ${action.rate.toFixed(1)}°/s   ` +
+            `${action.still ? `정지 ${(action.steadyMs / 1000).toFixed(1)}초` : '움직임'}` +
+            `${action.stalled ? '   센서 정지' : ''}`;
           break;
         }
         case 'swing': {
@@ -87,27 +113,24 @@ export class PointerTest extends Phaser.Scene {
         default:
           break;
       }
-    });
-
-    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('lobby'));
-
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.cleanup?.();
-      this.cleanup = null;
-      this.dots.clear();
-      this.pointers.clear();
-      this.colorIndex.clear();
-    });
+    }
   }
 
-  override update(): void {
+  protected override teardown(): void {
+    this.dots.clear();
+    this.pointers.clear();
+    this.colorIndex.clear();
+  }
+
+  protected step(): void {
+    this.stillnessText.setText(this.lastStillness);
     const lines: string[] = [];
     for (const [playerId, track] of this.pointers) {
       const seconds = (performance.now() - track.restedAt) / 1000;
       const displaced = Math.hypot(track.x - track.restedFrom.x, track.y - track.restedFrom.y);
       lines.push(
         `P${playerId}  포인터 ${track.x.toFixed(3)}, ${track.y.toFixed(3)}   ` +
-          `HOME 이후 ${seconds.toFixed(0)}초에 ${displaced.toFixed(3)} 이동 ` +
+          `B 이후 ${seconds.toFixed(0)}초에 ${displaced.toFixed(3)} 이동 ` +
           `(경로 ${track.travelled.toFixed(2)})`,
       );
     }

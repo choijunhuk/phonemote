@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { session } from '../../session.js';
+import { BaseGameScene } from './BaseGameScene.js';
+import type { GameAction } from '../../input/types.js';
 import type { CanonicalVector } from '../../input/types.js';
 import { sfx } from '../../ui/audio.js';
 import {
@@ -35,6 +37,9 @@ import {
 /** Where a grip is kept between scenes, so it is set once per session. */
 const GRIP_KEY = 'freezeFrameGrip';
 
+/** Practice stays wide: it is for learning the pose, not for being caught out. */
+const TOLERANCE_PRACTICE = 40;
+
 interface Card {
   readonly container: Phaser.GameObjects.Container;
   readonly nameText: Phaser.GameObjects.Text;
@@ -44,28 +49,33 @@ interface Card {
   readonly color: string;
 }
 
-export class FreezeFrame extends Phaser.Scene {
+export class FreezeFrame extends BaseGameScene {
   private state: FreezeState = createFreeze();
   private readonly cards = new Map<number, Card>();
   private poseText!: Phaser.GameObjects.Text;
   private phaseText!: Phaser.GameObjects.Text;
   private timerBar!: Phaser.GameObjects.Rectangle;
   private freezeBar!: Phaser.GameObjects.Rectangle;
-  private cleanup: Array<() => void> = [];
 
   constructor() {
     super('freeze-frame');
   }
 
-  create(): void {
+  protected build(): void {
     const { width, height } = this.scale;
-    session.configureInput({ pose: true });
 
     // A restarted scene is the same object with the same fields. Without a
     // fresh state the second game began at the last one's round number and
     // tolerance, with its calibration prompt already timed out — which looks
     // exactly like a game that starts already over.
-    this.state = createFreeze();
+    //
+    // Practice never ends and never punishes: unlimited lives, no tightening,
+    // and the angle on screen the whole time. It is where a player learns what
+    // "화면을 바닥으로" actually means for the way they hold their phone.
+    this.state =
+      this.mode === 'practice'
+        ? createFreeze({ hearts: 999, toleranceFloor: TOLERANCE_PRACTICE, freezeMsEnd: 600 })
+        : createFreeze();
     this.cards.clear();
 
     this.add
@@ -115,36 +125,30 @@ export class FreezeFrame extends Phaser.Scene {
 
     this.rebuildCards();
 
-    this.cleanup.push(
-      session.onPlayersChanged(() => this.rebuildCards()),
-      session.onAction((action) => {
-        // Gravity rather than angles: the poses this game asks for include flat
-        // and straight up, exactly where pitch and roll stop meaning anything
-        // (ARCHITECTURE.md 5.8).
-        if (action.kind === 'pose') {
-          readPose(this.state, action.playerId, action.up, this.time.now);
-          return;
-        }
-        if (action.kind !== 'button_down') return;
-        if (action.button === 'HOME') this.scene.start('lobby');
-        if (action.button === 'A') this.pressA(action.playerId);
-      }),
-    );
-
-    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('lobby'));
-
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      for (const off of this.cleanup) off();
-      this.cleanup = [];
-      this.cards.clear();
-    });
+    this.onCleanup(session.onPlayersChanged(() => this.rebuildCards()));
   }
 
-  override update(_time: number, delta: number): void {
-    const dt = Math.min(delta / 1000, 1 / 30);
+  protected override onGameAction(action: GameAction): void {
+    // Gravity rather than angles: the poses this game asks for include flat
+    // and straight up, exactly where pitch and roll stop meaning anything
+    // (ARCHITECTURE.md 5.8).
+    if (action.kind === 'pose') {
+      readPose(this.state, action.playerId, action.up, this.time.now);
+      return;
+    }
+    if (action.kind !== 'button_down') return;
+    if (action.button === 'A') this.pressA(action.playerId);
+  }
+
+  protected override teardown(): void {
+    this.cards.clear();
+  }
+
+  protected step(dt: number): void {
     this.play(stepFreeze(this.state, dt, this.time.now));
     this.syncGrips();
     this.render();
+    if (this.state.phase === 'over') this.returnToLobbyAfter(10);
   }
 
   /**

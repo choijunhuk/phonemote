@@ -108,6 +108,7 @@ const SWING_FRAMES = 9;
 class FakePhone {
   private readonly held = new Set<string>();
   private swingFrame = -1;
+  private swingAim = { horizontal: 1, vertical: 0 };
   private motionSeq = 0;
   private seq = 0;
   private pitch = 0;
@@ -119,7 +120,19 @@ class FakePhone {
   ) {}
 
   press(key: string): void {
-    if (key === this.keys.swing && this.swingFrame < 0) this.swingFrame = 0;
+    if (key === this.keys.swing && this.swingFrame < 0) {
+      this.swingFrame = 0;
+      // The direction keys held at that moment decide where the swing goes.
+      // Every fake swing used to sweep the same way, so a game that reads the
+      // direction — bowling's hook, golf's club face — could not be exercised
+      // without a phone in the room.
+      const horizontal = this.axis(this.keys.left, this.keys.right);
+      const vertical = this.axis(this.keys.down, this.keys.up);
+      this.swingAim =
+        horizontal === 0 && vertical === 0
+          ? { horizontal: 1, vertical: 0 }
+          : { horizontal, vertical };
+    }
     this.held.add(key);
   }
 
@@ -159,13 +172,20 @@ class FakePhone {
 
     let acceleration = { x: 0, y: 0, z: 0 };
     let swingYaw = 0;
+    let swingPitch = 0;
     let swingRoll = 0;
     if (this.swingFrame >= 0) {
       const shape = Math.sin((this.swingFrame / (SWING_FRAMES - 1)) * Math.PI);
-      // Sweeping right, mostly as yaw with a little roll, like a hand does.
-      swingYaw = -shape * SWING_PEAK_RATE;
-      swingRoll = -shape * SWING_PEAK_RATE * 0.2;
-      acceleration = { x: 0, y: 0, z: -shape * 60 };
+      // Canonical yaw is -beta and canonical pitch is +alpha in portrait
+      // (ARCHITECTURE.md 5.6), so the signs here are what make a rightward key
+      // produce a rightward swing.
+      swingYaw = -this.swingAim.horizontal * shape * SWING_PEAK_RATE;
+      swingPitch = this.swingAim.vertical * shape * SWING_PEAK_RATE;
+      // A hand sweeping sideways also rolls a little; a hand chopping does not.
+      swingRoll = -this.swingAim.horizontal * shape * SWING_PEAK_RATE * 0.2;
+      // A swing that moves the phone nowhere is a turn, and the detector vetoes
+      // it (ARCHITECTURE.md D40). Real swings reached 32-60 m/s^2.
+      acceleration = { x: 0, y: 0, z: -shape * 45 };
       this.swingFrame = this.swingFrame >= SWING_FRAMES - 1 ? -1 : this.swingFrame + 1;
     }
 
@@ -182,7 +202,7 @@ class FakePhone {
       // (ARCHITECTURE.md 5.1) and alpha/beta/gamma are the rates about x/y/z.
       orientation: { alpha: 0, beta: 90 - this.pitch, gamma: this.roll },
       rotationRate: {
-        alpha: vertical * TURN_RATE,
+        alpha: vertical * TURN_RATE + swingPitch,
         beta: -horizontal * TURN_RATE + swingYaw,
         gamma: swingRoll,
       },

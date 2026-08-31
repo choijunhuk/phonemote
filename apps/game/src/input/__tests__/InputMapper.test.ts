@@ -259,3 +259,82 @@ describe('canonical snapshot', () => {
     ]);
   });
 });
+
+describe('letting go of the trigger', () => {
+  it('reports the motion that was under way at that instant', () => {
+    // Bowling needs the moment the ball leaves the hand. Inferring it from the
+    // rate curve is an estimate with a 50 ms error bar, and a gentle delivery
+    // may never cross the swing threshold at all (ARCHITECTURE.md D49).
+    const mapper = new InputMapper({ release: true });
+    const actions: GameAction[] = [];
+    actions.push(...mapper.update(raw({ timestamp: 0, buttons: BUTTON.TRIGGER })));
+    for (let i = 1; i <= 6; i++) {
+      actions.push(
+        ...mapper.update(
+          raw({
+            timestamp: i * 16,
+            buttons: BUTTON.TRIGGER,
+            rotationRate: { alpha: 300, beta: 0, gamma: 0 },
+          }),
+        ),
+      );
+    }
+    actions.push(...mapper.update(raw({ timestamp: 112, buttons: 0 })));
+
+    const release = actions.find((action) => action.kind === 'release');
+    expect(release).toBeDefined();
+    if (release?.kind !== 'release') return;
+    expect(release.rate).toBeGreaterThan(200);
+    expect(release.heldMs).toBeCloseTo(112, 0);
+    // Six steps of 16 ms at 300 deg/s about the phone's x axis, which in this
+    // landscape frame is canonical yaw (ARCHITECTURE.md 5.6).
+    expect(Math.abs(release.rotation.yaw)).toBeGreaterThan(20);
+    expect(Math.abs(release.rotation.pitch)).toBeLessThan(1);
+  });
+
+  it('says nothing about the trigger unless a game asked', () => {
+    const mapper = new InputMapper({});
+    const actions = [
+      ...mapper.update(raw({ timestamp: 0, buttons: BUTTON.TRIGGER })),
+      ...mapper.update(raw({ timestamp: 32, buttons: 0 })),
+    ];
+    expect(kinds(actions)).not.toContain('release');
+  });
+});
+
+describe('how still the phone is being held', () => {
+  it('separates a hand at rest from a phone that stopped sending', () => {
+    // Measured: a hand trying to hold still averages 3.3 deg/s. A stalled phone
+    // reads 0 forever, and a game that judges stillness must not reward that.
+    const mapper = new InputMapper({ stillness: true });
+    let last: GameAction | undefined;
+    for (let i = 0; i < 40; i++) {
+      const actions = mapper.update(
+        raw({ timestamp: i * 16, rotationRate: { alpha: 2, beta: -1, gamma: 1 } }),
+      );
+      last = actions.find((action) => action.kind === 'stillness') ?? last;
+    }
+    expect(last?.kind).toBe('stillness');
+    if (last?.kind !== 'stillness') return;
+    expect(last.still).toBe(true);
+    expect(last.steadyMs).toBeGreaterThan(300);
+    expect(last.stalled).toBe(false);
+  });
+
+  it('breaks the hold when the phone is actually moved', () => {
+    const mapper = new InputMapper({ stillness: true });
+    for (let i = 0; i < 40; i++) {
+      mapper.update(raw({ timestamp: i * 16, rotationRate: { alpha: 1, beta: 0, gamma: 0 } }));
+    }
+    let last: GameAction | undefined;
+    for (let i = 40; i < 60; i++) {
+      const actions = mapper.update(
+        raw({ timestamp: i * 16, rotationRate: { alpha: 120, beta: 0, gamma: 0 } }),
+      );
+      last = actions.find((action) => action.kind === 'stillness') ?? last;
+    }
+    if (last?.kind !== 'stillness') throw new Error('no stillness action');
+    expect(last.still).toBe(false);
+    expect(last.steadyMs).toBe(0);
+  });
+});
