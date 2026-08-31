@@ -3,9 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { decodeSensor, parseTrace } from '@phonemote/protocol';
+import { GyroBias } from '../GyroBias.js';
 import { InputMapper } from '../InputMapper.js';
-import { MAX_POINTER_STEP_SECONDS, PointerMode } from '../PointerMode.js';
 import { normalize } from '../SensorNormalizer.js';
+import { MAX_POINTER_STEP_SECONDS, PointerMode } from '../PointerMode.js';
 import type { CanonicalSensorFrame, GameAction } from '../types.js';
 
 /**
@@ -215,4 +216,86 @@ describe('the filter against a deadzone alone', () => {
     for (let i = 0; i < 120; i++) pointer.update(noisyFrame(i * 16, 8));
     expect(pointer.position.x).toBeGreaterThan(0.7);
   });
+});
+
+describe('what the two fixes together buy on a real recording', () => {
+  /** Net displacement of the cursor over the whole trace, in screen widths. */
+  function drift(name: string): number {
+    const points = replayPointer(name);
+    const last = points.at(-1);
+    return Math.hypot((last?.x ?? 0.5) - 0.5, (last?.y ?? 0.5) - 0.5);
+  }
+
+  it('integrates the whole of the elapsed time, not 90% of it', () => {
+    // The clamp used to be 50 ms against a measured 51-55 ms frame interval, so
+    // it fired on every single frame and the cursor was systematically slower
+    // than the hand by an amount that moved with the jitter (D36).
+    const trace = parseTrace(readFileSync(join(CORPUS, 'real-rest.pmtrace'), 'utf8'));
+    const mapper = new InputMapper({ pointer: {} });
+    let elapsed = 0;
+    let integrated = 0;
+    let previous: number | null = null;
+    for (const encoded of trace.frames) {
+      const frame = decodeSensor(encoded);
+      if (previous !== null) {
+        const dt = (frame.timestamp - previous) / 1000;
+        elapsed += dt;
+        integrated += Math.min(dt, MAX_POINTER_STEP_SECONDS);
+      }
+      previous = frame.timestamp;
+      mapper.update(frame);
+    }
+    expect(elapsed).toBeGreaterThan(1);
+    expect(integrated / elapsed).toBeGreaterThan(0.99);
+  });
+
+  it('moves the cursor a little further now, which is the fix working', () => {
+    // Measured 0.0358 screen widths before these changes and 0.0396 after.
+    // That is the gain fix, not a regression: this recording is a hand being
+    // held still, not a tripod, so most of that displacement is real movement
+    // the cursor was previously only 90.6% following. The bound stays where it
+    // was, and the drift is still well inside it.
+    const measured = drift('real-rest.pmtrace');
+    expect(measured).toBeGreaterThan(0.03);
+    expect(measured).toBeLessThan(0.06);
+  });
+
+  it('takes the offset out of anything that integrates yaw', () => {
+    // Where the correction does and does not matter, measured rather than
+    // assumed. The pointer is already immune: at a 2 deg/s deadzone with the
+    // one-euro filter in front of it, a 0.44 deg/s bias plus realistic noise
+    // moves the cursor exactly zero over a full minute, corrected or not.
+    //
+    // What it does matter for is anything that integrates yaw without a
+    // deadzone in the way — the fused pose, and a game holding an aim across a
+    // few seconds. There the offset never averages out; it just accumulates.
+    let seed = 11;
+    const random = (): number => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296 - 0.5;
+    };
+    const OFFSET = 0.44;
+
+    const integrate = (correct: boolean): number => {
+      const bias = new GyroBias();
+      let total = 0;
+      for (let i = 0; i < 60 * 5; i++) {
+        const raw = {
+          yaw: OFFSET + random() * 2.2,
+          pitch: random() * 2.6,
+          roll: random() * 1.4,
+        };
+        const rate = correct ? bias.update(raw, 1 / 60) : raw;
+        total += rate.yaw / 60;
+      }
+      return Math.abs(total);
+    };
+
+    const uncorrected = integrate(false);
+    const corrected = integrate(true);
+    // Five seconds of a held aim: 0.44 deg/s is 2.2 degrees of walk.
+    expect(uncorrected).toBeGreaterThan(1.5);
+    expect(corrected).toBeLessThan(uncorrected * 0.6);
+  });
+
 });
