@@ -15,15 +15,10 @@ import { session } from '../session.js';
  * Press r in the lobby to start.
  */
 
-const HOLD_MS = 1200;
+/** Recorded either side of the moment the player says "now". */
+const BEFORE_MS = 1000;
+const AFTER_MS = 1000;
 const SAMPLE_EVERY_MS = 50;
-/** How long the phone must be still before a pose is recorded, in ms. */
-const STILL_FOR_MS = 500;
-/** deg/s under which the phone counts as still. */
-const STILL_RATE = 25;
-/** deg/s that counts as the swing having happened. */
-const SWING_RATE = 400;
-const GIVE_UP_MS = 15000;
 
 interface Step {
   readonly key: string;
@@ -31,12 +26,13 @@ interface Step {
   /** What the mapping table says should happen, for the report. */
   readonly expectation: string;
   /**
-   * 'hold' waits until the phone stops moving, then records the pose. 'motion'
-   * waits for the movement itself and records around it.
+   * Only changes the wording. Both kinds record a second either side of the
+   * button press: for a hold both halves are the pose, for a movement the
+   * first half already contains it.
    *
-   * Counting seconds instead cost two steps of the first real session: the
-   * swing happened outside the window, and a flip was still in progress when
-   * recording ended — which showed up as a gravity vector shorter than one.
+   * Detecting the moment automatically was tried and was worse. Waiting for
+   * stillness or for a rate threshold gave the player nothing to see and no way
+   * to intervene, and a step that never met its condition simply sat there.
    */
   readonly mode: 'hold' | 'motion';
 }
@@ -180,58 +176,58 @@ export class AxisRecorder {
   }
 
   /**
-   * Waits for the phone to be doing the thing, then records.
-   *
-   * A hold is recorded once the phone has been still for half a second, so a
-   * pose is never captured mid-flip. A motion is recorded once the rate crosses
-   * the swing line, and keeps the samples leading up to it, so the movement is
-   * in the window rather than the player's guess at when the window was.
+   * Samples continuously and keeps the last second, so pressing A captures the
+   * second before the press as well as the second after it. A pose is in both
+   * halves; a swing is in the first, which is the only way to catch something
+   * that is over before anyone could react to it.
    */
   private async collect(playerId: number, step: Step, index: number): Promise<Sample[]> {
     const head = `<h2>${index + 1} / ${STEPS.length}</h2><p class="prompt">${step.prompt}</p>`;
-    const rolling: Sample[] = [];
-    const started = performance.now();
-    let stillSince: number | null = null;
+    const before: Sample[] = [];
+    const keep = Math.ceil(BEFORE_MS / SAMPLE_EVERY_MS);
+    let pressed = false;
 
-    // Wait for the cue.
-    for (;;) {
-      const sample = this.samplePlayer(playerId);
-      const now = performance.now();
-      if (sample) {
-        rolling.push(sample);
-        if (rolling.length > 40) rolling.shift();
+    const stop = session.onAction((action) => {
+      if (action.kind === 'button_down' && action.playerId === playerId) pressed = true;
+    });
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === ' ' || event.key === 'Enter') pressed = true;
+    };
+    window.addEventListener('keydown', onKey);
 
-        const rate = this.rateOf(sample);
-        if (step.mode === 'hold') {
-          if (rate < STILL_RATE) stillSince ??= now;
-          else stillSince = null;
-          if (stillSince !== null && now - stillSince >= STILL_FOR_MS) break;
-        } else if (rate > SWING_RATE) {
-          break;
+    try {
+      while (!pressed) {
+        const sample = this.samplePlayer(playerId);
+        if (sample) {
+          before.push(sample);
+          if (before.length > keep) before.shift();
         }
+        const rate = sample ? this.rateOf(sample) : 0;
+        this.show(
+          head +
+            `<p class="countdown">${
+              step.mode === 'hold' ? '그 자세로' : '동작한 다음'
+            } <b>A</b> 를 누르세요 (PC: 스페이스)</p>` +
+            `<p class="recording">각속도 ${rate.toFixed(0)}°/s</p>`,
+        );
+        await wait(SAMPLE_EVERY_MS);
       }
 
-      if (now - started > GIVE_UP_MS) break;
-      this.show(
-        head +
-          (step.mode === 'hold'
-            ? '<p class="countdown">자세를 만들고 멈추면 자동으로 측정합니다</p>'
-            : '<p class="countdown">동작하면 자동으로 측정합니다</p>'),
-      );
-      await wait(SAMPLE_EVERY_MS);
-    }
+      const samples = [...before];
+      for (let waited = 0; waited < AFTER_MS; waited += SAMPLE_EVERY_MS) {
+        const sample = this.samplePlayer(playerId);
+        if (sample) samples.push(sample);
+        this.show(head + `<p class="recording">측정 중… ${samples.length}개</p>`);
+        await wait(SAMPLE_EVERY_MS);
+      }
 
-    // Record: for a hold that is the pose itself; for a motion the samples
-    // already captured carry the run-up, and these carry the follow-through.
-    const samples: Sample[] = step.mode === 'motion' ? rolling.slice(-10) : [];
-    for (let waited = 0; waited < HOLD_MS; waited += SAMPLE_EVERY_MS) {
-      const sample = this.samplePlayer(playerId);
-      if (sample) samples.push(sample);
-      this.show(head + `<p class="recording">측정 중… ${samples.length}개</p>`);
-      await wait(SAMPLE_EVERY_MS);
+      // Let go of the button before the next step, or it fires immediately.
+      await wait(400);
+      return samples;
+    } finally {
+      stop();
+      window.removeEventListener('keydown', onKey);
     }
-
-    return samples;
   }
 
   async run(): Promise<void> {
