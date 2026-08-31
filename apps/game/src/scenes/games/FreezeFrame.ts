@@ -1,87 +1,56 @@
 import Phaser from 'phaser';
-import {
-  POSES,
-  poseCloseness,
-  poseOffByDeg,
-  posesUsableFrom,
-  type NamedPose,
-} from '../../input/pose.js';
 import { session } from '../../session.js';
 import type { CanonicalVector } from '../../input/types.js';
 import { sfx } from '../../ui/audio.js';
+import {
+  alivePlayers,
+  calibrate,
+  createFreeze,
+  everyoneReady,
+  holdProgress,
+  leader,
+  readPose,
+  startRound,
+  stepFreeze,
+  syncPlayers,
+  type FreezeEvent,
+  type FreezeState,
+} from './freezeState.js';
 
 /**
- * Freeze Frame: the screen calls a pose, everyone has two seconds to hold it.
+ * Freeze Frame: the screen calls a pose, everyone has to hold it.
  *
- * Chosen as the next game because it is immune to every weakness this platform
- * actually has. It never asks when a swing happened, so detection latency and
- * recall do not matter. It never integrates anything, so drift does not exist.
- * It never needs to know which way the player is facing, which is the one thing
- * Chrome cannot tell us. All it reads is which way gravity points, which is the
- * most trustworthy number in the whole system.
+ * Chosen as the second game because it is immune to every weakness this
+ * platform actually has. It never asks when a swing happened, so detection
+ * latency and recall do not matter. It never integrates anything, so drift does
+ * not exist. It never needs to know which way the player is facing, which is
+ * the one thing Chrome cannot tell us. All it reads is which way gravity
+ * points, which is the most trustworthy number in the whole system.
  *
  * It is also the first thing here that four phones play at once.
+ *
+ * The rules live in freezeState.ts; this draws them (ARCHITECTURE.md 8).
  */
 
-const ROUND_SECONDS = 3;
-const REVEAL_SECONDS = 1.4;
-const TOLERANCE_START = 45;
-const TOLERANCE_FLOOR = 20;
-/** Rounds survived before the tolerance stops tightening. */
-const TIGHTEN_OVER = 8;
-/**
- * Judging starts once this much of the round has passed. Before that the
- * player is still moving, and their best moment on the way is not the pose.
- */
-const JUDGE_AFTER = 0.45;
-/** Nobody should be stuck on the setup screen because a prompt was missed. */
-const AUTO_CALIBRATE_SECONDS = 4;
+/** Where a grip is kept between scenes, so it is set once per session. */
+const GRIP_KEY = 'freezeFrameGrip';
 
-type Phase = 'ready' | 'holding' | 'reveal' | 'over';
-
-interface Contestant {
-  readonly playerId: number;
-  readonly name: string;
-  readonly color: string;
-  readonly card: Phaser.GameObjects.Container;
+interface Card {
+  readonly container: Phaser.GameObjects.Container;
   readonly nameText: Phaser.GameObjects.Text;
   readonly scoreText: Phaser.GameObjects.Text;
+  readonly heartText: Phaser.GameObjects.Text;
   readonly meter: Phaser.GameObjects.Rectangle;
-  score: number;
-  out: boolean;
-  closeness: number;
-  held: boolean;
-  /** Degrees away from the called pose, so a miss can be read rather than guessed. */
-  offBy: number;
-  /**
-   * Closest they got while the round was being judged. Reading the instant the
-   * timer expires punishes a hand that arrives and then breathes.
-   */
-  bestOffBy: number;
-  /**
-   * The hold this player calibrated as their own "level". Poses are written
-   * against the canonical landscape grip, but nobody holds a phone to a
-   * specification, and a pose game that silently demands one fails every round
-   * for a reason nobody in the room can see.
-   */
-  reference: CanonicalVector | null;
-  /** Most recent reading, so A can adopt it as the reference. */
-  lastUp: CanonicalVector | null;
+  readonly color: string;
 }
 
 export class FreezeFrame extends Phaser.Scene {
-  private phase: Phase = 'ready';
-  private timer = 0;
-  private round = 0;
-  private pose: NamedPose =
-    POSES[0] ?? { key: 'level', label: '그대로', axis: { x: 0, y: 0, z: -1 }, angleDeg: 0 };
-  private tolerance = TOLERANCE_START;
-  private readyFor = 0;
-
-  private readonly contestants = new Map<number, Contestant>();
+  private state: FreezeState = createFreeze();
+  private readonly cards = new Map<number, Card>();
   private poseText!: Phaser.GameObjects.Text;
   private phaseText!: Phaser.GameObjects.Text;
   private timerBar!: Phaser.GameObjects.Rectangle;
+  private freezeBar!: Phaser.GameObjects.Rectangle;
   private cleanup: Array<() => void> = [];
 
   constructor() {
@@ -92,8 +61,15 @@ export class FreezeFrame extends Phaser.Scene {
     const { width, height } = this.scale;
     session.configureInput({ pose: true });
 
+    // A restarted scene is the same object with the same fields. Without a
+    // fresh state the second game began at the last one's round number and
+    // tolerance, with its calibration prompt already timed out — which looks
+    // exactly like a game that starts already over.
+    this.state = createFreeze();
+    this.cards.clear();
+
     this.add
-      .text(width / 2, 28, 'FREEZE FRAME', {
+      .text(width / 2, 24, 'FREEZE FRAME', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '34px',
         color: '#f1f3f8',
@@ -101,7 +77,7 @@ export class FreezeFrame extends Phaser.Scene {
       .setOrigin(0.5, 0);
 
     this.poseText = this.add
-      .text(width / 2, height * 0.3, '', {
+      .text(width / 2, height * 0.28, '', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '76px',
         color: '#2ed573',
@@ -110,49 +86,43 @@ export class FreezeFrame extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.phaseText = this.add
-      .text(width / 2, height * 0.44, '', {
+      .text(width / 2, height * 0.42, '', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '26px',
-        color: '#98a0b3',
+        color: '#c3c9d6',
+        align: 'center',
       })
       .setOrigin(0.5);
 
+    // Two bars: how long is left, and how much of the hold is done. The second
+    // is the whole point of the game, so it cannot be invisible.
     this.add.rectangle(width / 2, height * 0.52, width * 0.6, 8, 0x232838);
     this.timerBar = this.add
       .rectangle(width * 0.2, height * 0.52, width * 0.6, 8, 0x3742fa)
       .setOrigin(0, 0.5);
+    this.freezeBar = this.add
+      .rectangle(width * 0.2, height * 0.52 + 14, width * 0.6, 6, 0x2ed573)
+      .setOrigin(0, 0.5)
+      .setScale(0, 1);
 
     this.add
-      .text(width / 2, height - 22, 'HOME: 로비   ·   ESC: 로비', {
+      .text(width / 2, height - 20, 'HOME 또는 ESC: 로비', {
         fontFamily: 'system-ui, sans-serif',
-        fontSize: '16px',
-        color: '#6b7488',
+        fontSize: '24px',
+        color: '#98a0b3',
       })
       .setOrigin(0.5, 1);
 
-    this.rebuildContestants();
+    this.rebuildCards();
 
     this.cleanup.push(
-      session.onPlayersChanged(() => this.rebuildContestants()),
+      session.onPlayersChanged(() => this.rebuildCards()),
       session.onAction((action) => {
         // Gravity rather than angles: the poses this game asks for include flat
         // and straight up, exactly where pitch and roll stop meaning anything
         // (ARCHITECTURE.md 5.8).
         if (action.kind === 'pose') {
-          const contestant = this.contestants.get(action.playerId);
-          if (!contestant) return;
-          contestant.lastUp = action.up;
-          if (!contestant.reference) return;
-
-          // Judged in the player's own frame, so the grip they chose is level.
-          // Judged as a rotation from this player's own grip, which keeps the
-          // direction of the movement — the part an alignment onto "up" loses.
-          contestant.offBy = poseOffByDeg(this.pose, contestant.reference, action.up);
-          contestant.closeness = poseCloseness(contestant.offBy, this.tolerance);
-          contestant.held = contestant.offBy <= this.tolerance;
-          if (this.phase === 'holding' && this.timer <= ROUND_SECONDS * (1 - JUDGE_AFTER)) {
-            contestant.bestOffBy = Math.min(contestant.bestOffBy, contestant.offBy);
-          }
+          readPose(this.state, action.playerId, action.up, this.time.now);
           return;
         }
         if (action.kind !== 'button_down') return;
@@ -166,220 +136,221 @@ export class FreezeFrame extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       for (const off of this.cleanup) off();
       this.cleanup = [];
-      this.contestants.clear();
+      this.cards.clear();
     });
-
-    this.phase = 'ready';
   }
 
   override update(_time: number, delta: number): void {
     const dt = Math.min(delta / 1000, 1 / 30);
-
-    if (this.phase === 'ready') {
-      this.readyFor += dt;
-      // Adopt whatever they are holding rather than sit on a prompt forever.
-      if (this.readyFor >= AUTO_CALIBRATE_SECONDS) {
-        for (const contestant of this.contestants.values()) {
-          if (!contestant.reference && contestant.lastUp) this.pressA(contestant.playerId);
-        }
-      }
-    }
-
-    switch (this.phase) {
-      case 'holding': {
-        this.timer -= dt;
-        this.timerBar.setScale(Math.max(0, this.timer / ROUND_SECONDS), 1);
-        if (this.timer <= 0) this.judge();
-        break;
-      }
-      case 'reveal': {
-        this.timer -= dt;
-        if (this.timer <= 0) this.startRound();
-        break;
-      }
-      default:
-        break;
-    }
-
+    this.play(stepFreeze(this.state, dt, this.time.now));
+    this.syncGrips();
     this.render();
   }
 
   /**
-   * A does double duty: set your grip before the game, restart it after.
+   * Grips outlive the scene.
+   *
+   * Being asked to calibrate again on every visit — after a lobby, after a
+   * restart, after somebody else's phone reconnected — is a setup screen
+   * standing between the player and the game they already set up once.
    */
+  private syncGrips(): void {
+    for (const player of this.state.players) {
+      const key = `${GRIP_KEY}:${player.id}`;
+      if (player.reference) {
+        this.registry.set(key, player.reference);
+        continue;
+      }
+      const stored = this.registry.get(key) as CanonicalVector | undefined;
+      if (stored) {
+        player.reference = stored;
+        session.log(`기준 자세 P${player.id} (이전 설정 사용)`);
+      }
+    }
+  }
+
+  /** Sound and vibration, which are the only things the rules cannot do. */
+  private play(events: readonly FreezeEvent[]): void {
+    for (const event of events) {
+      switch (event.kind) {
+        case 'lock':
+          session.vibrate(event.playerId, [40]);
+          sfx.tick();
+          session.log(`고정 P${event.playerId} +${event.points}`);
+          break;
+        case 'miss':
+          // Two short pulses for a miss, one long one for being knocked out:
+          // the phone is where the player is looking, not the screen.
+          session.vibrate(event.playerId, event.out ? [200] : [25, 60, 25]);
+          break;
+        case 'reveal':
+          if (event.locked > 0) sfx.point();
+          else sfx.whiff();
+          break;
+        case 'round':
+          sfx.tick();
+          session.log(
+            `${event.round}라운드 ${this.state.pose.key} ` +
+              `허용 ${this.state.tolerance.toFixed(0)}°`,
+          );
+          break;
+        default:
+          sfx.win();
+          break;
+      }
+    }
+  }
+
+  /** A does double duty: set your grip before the game, restart it after. */
   private pressA(playerId: number): void {
-    if (this.phase === 'over') {
+    if (this.state.phase === 'over') {
       this.scene.restart();
       return;
     }
-    const contestant = this.contestants.get(playerId);
-    if (!contestant?.lastUp) return;
-
-    contestant.reference = contestant.lastUp;
-    contestant.closeness = 1;
-    contestant.held = true;
-    contestant.offBy = 0;
-    session.vibrate(playerId, [30]);
-    session.log(`기준 자세 설정 P${playerId}`);
-
-    if (this.phase === 'ready' && this.everyoneReady()) this.startRound();
-  }
-
-  private everyoneReady(): boolean {
-    const contestants = [...this.contestants.values()];
-    return contestants.length > 0 && contestants.every((contestant) => contestant.reference);
-  }
-
-  private startRound(): void {
-    const alive = [...this.contestants.values()].filter((contestant) => !contestant.out);
-    if (this.round > 0 && alive.length === 0) {
-      this.phase = 'over';
+    if (!calibrate(this.state, playerId, true)) {
+      if (this.state.flatWarning === playerId) session.vibrate(playerId, [25, 60, 25]);
       return;
     }
-
-    this.round++;
-    // Tighten as the round number climbs, then hold: a game that gets harder
-    // forever just ends in frustration rather than in a winner.
-    const progress = Math.min(1, (this.round - 1) / TIGHTEN_OVER);
-    this.tolerance = TOLERANCE_START - (TOLERANCE_START - TOLERANCE_FLOOR) * progress;
-
-    // Only poses this grip can actually distinguish: gravity cannot see a turn
-    // about itself, and calling one would be asking the player to stand still.
-    const reference = [...this.contestants.values()].find((c) => c.reference)?.reference;
-    const available = reference
-      ? posesUsableFrom(reference, Math.max(30, this.tolerance))
-      : [...POSES];
-    const choices = available.filter((pose) => pose.key !== this.pose.key);
-    this.pose = choices[Math.floor(Math.random() * choices.length)] ?? this.pose;
-
-    this.phase = 'holding';
-    this.timer = ROUND_SECONDS;
-    for (const contestant of this.contestants.values()) contestant.bestOffBy = 180;
-    sfx.tick();
-  }
-
-  private judge(): void {
-    this.phase = 'reveal';
-    this.timer = REVEAL_SECONDS;
-
-    let anyHeld = false;
-    for (const contestant of this.contestants.values()) {
-      if (contestant.out) continue;
-      if (contestant.bestOffBy <= this.tolerance) {
-        contestant.score++;
-        anyHeld = true;
-        session.vibrate(contestant.playerId, [40]);
-      } else {
-        // Missing a pose costs the round, not the game: a player knocked out in
-        // the first ten seconds spends the rest of it watching.
-        session.vibrate(contestant.playerId, [15, 60, 15]);
-      }
+    session.vibrate(playerId, [30]);
+    session.log(`기준 자세 P${playerId}`);
+    if (this.state.phase === 'ready' && everyoneReady(this.state)) {
+      this.play(startRound(this.state));
     }
-    if (anyHeld) sfx.point();
   }
 
-  private rebuildContestants(): void {
+  private rebuildCards(): void {
     const { width, height } = this.scale;
-    // Somebody joining must not cost everyone else their grip and their score.
-    const carried = new Map(
-      [...this.contestants.values()].map((contestant) => [
-        contestant.playerId,
-        {
-          score: contestant.score,
-          reference: contestant.reference,
-          lastUp: contestant.lastUp,
-        },
-      ]),
-    );
-    for (const contestant of this.contestants.values()) contestant.card.destroy();
-    this.contestants.clear();
+    for (const card of this.cards.values()) card.container.destroy();
+    this.cards.clear();
 
     const players = session.players;
+    // Scores, grips and lives live in the state, which keeps every player it
+    // already knows: somebody joining must not cost the rest of the room its
+    // game, which is what rebuilding the roster from scratch used to do.
+    syncPlayers(
+      this.state,
+      players.map((player) => player.id),
+    );
+
     players.forEach((player, index) => {
       const color = Number(`0x${player.color.slice(1)}`);
       const cardWidth = Math.min(260, (width * 0.9) / Math.max(1, players.length));
       const x = width / 2 + (index - (players.length - 1) / 2) * (cardWidth + 16);
-      const y = height * 0.75;
 
-      const panel = this.add.rectangle(0, 0, cardWidth, 120, 0x171b24).setStrokeStyle(2, color);
+      const panel = this.add.rectangle(0, 0, cardWidth, 132, 0x171b24).setStrokeStyle(2, color);
       const nameText = this.add
-        .text(0, -36, player.name, {
+        .text(0, -44, player.name, {
           fontFamily: 'system-ui, sans-serif',
-          fontSize: '22px',
+          fontSize: '24px',
           color: player.color,
         })
         .setOrigin(0.5);
       const scoreText = this.add
-        .text(0, 2, '0', {
+        .text(0, -8, '0', {
           fontFamily: 'ui-monospace, monospace',
-          fontSize: '26px',
+          fontSize: '28px',
           color: '#f1f3f8',
         })
         .setOrigin(0.5);
-      const meterTrack = this.add.rectangle(0, 40, cardWidth - 40, 10, 0x232838);
+      const heartText = this.add
+        .text(0, 24, '', {
+          fontFamily: 'system-ui, sans-serif',
+          fontSize: '24px',
+          color: '#ff4757',
+        })
+        .setOrigin(0.5);
+      const meterTrack = this.add.rectangle(0, 52, cardWidth - 40, 10, 0x232838);
       const meter = this.add
-        .rectangle(-(cardWidth - 40) / 2, 40, cardWidth - 40, 10, color)
+        .rectangle(-(cardWidth - 40) / 2, 52, cardWidth - 40, 10, color)
         .setOrigin(0, 0.5);
 
-      const card = this.add.container(x, y, [panel, nameText, scoreText, meterTrack, meter]);
-      this.contestants.set(player.id, {
-        playerId: player.id,
-        name: player.name,
-        color: player.color,
-        card,
+      const container = this.add.container(x, height * 0.76, [
+        panel,
         nameText,
         scoreText,
+        heartText,
+        meterTrack,
         meter,
-        score: carried.get(player.id)?.score ?? 0,
-        out: false,
-        closeness: 0,
-        held: false,
-        offBy: 180,
-        bestOffBy: 180,
-        reference: carried.get(player.id)?.reference ?? null,
-        lastUp: carried.get(player.id)?.lastUp ?? null,
+      ]);
+      this.cards.set(player.id, {
+        container,
+        nameText,
+        scoreText,
+        heartText,
+        meter,
+        color: player.color,
       });
     });
   }
 
   private render(): void {
-    this.poseText.setText(
-      this.phase === 'over' ? '끝!' : this.phase === 'ready' ? '준비' : this.pose.label,
-    );
+    const { phase } = this.state;
+    this.poseText.setText(phase === 'over' ? '끝!' : phase === 'ready' ? '준비' : this.state.pose.label);
 
-    const held = [...this.contestants.values()].filter((contestant) => contestant.held).length;
-    const waiting = [...this.contestants.values()].filter(
-      (contestant) => !contestant.reference,
-    ).length;
-    this.phaseText.setText(
-      this.contestants.size === 0
-        ? '폰을 연결하세요 (?fake=1 로 키보드 사용)'
-        : this.phase === 'ready'
-          ? `편한 자세로 폰을 들고 A — ${waiting}명 남음 (그 자세가 기준이 됩니다)`
-          : this.phase === 'holding'
-            ? `자세를 유지하세요 — ${held}/${this.contestants.size} 성공 중   (허용 ${this.tolerance.toFixed(0)}°)`
-            : this.phase === 'reveal'
-              ? `${this.round}라운드 결과`
-              : 'A: 다시',
-    );
+    const locked = this.state.players.filter((player) => player.locked).length;
+    this.phaseText.setText(this.phaseMessage(locked));
 
-    for (const contestant of this.contestants.values()) {
-      // The angle is the whole diagnosis: a miss at 20 degrees is a tolerance
-      // question, a miss at 90 means the pose does not mean what it says.
-      const detail = contestant.reference
-        ? `${contestant.offBy.toFixed(0)}°`
-        : 'A를 누르세요';
-      contestant.scoreText.setText(`${contestant.score}   ${detail}`);
-      contestant.meter.setFillStyle(contestant.held ? 0x2ed573 : Number(`0x${contestant.color.slice(1)}`));
-      contestant.meter.setScale(contestant.closeness, 1);
-      contestant.nameText.setColor(contestant.held ? '#2ed573' : contestant.color);
+    // The hold in progress, shown while it happens rather than announced after.
+    this.freezeBar.setScale(phase === 'holding' ? holdProgress(this.state) : 0, 1);
+    this.timerBar
+      .setVisible(phase === 'holding')
+      .setScale(Math.max(0, this.state.timer / this.state.config.roundSeconds), 1);
+
+    for (const player of this.state.players) {
+      const card = this.cards.get(player.id);
+      if (!card) continue;
+      const detail = !player.reference
+        ? 'A를 누르세요'
+        : player.out
+          ? '탈락'
+          : player.locked
+            ? `성공 +${player.lockPoints}`
+            : `${player.offBy.toFixed(0)}°`;
+      card.scoreText.setText(`${player.score}   ${detail}`);
+      card.heartText.setText('♥'.repeat(Math.max(0, player.hearts)));
+      card.meter.setFillStyle(player.locked ? 0x2ed573 : Number(`0x${card.color.slice(1)}`));
+      card.meter.setScale(player.locked ? 1 : player.closeness, 1);
+      card.container.setAlpha(player.out ? 0.4 : 1);
+      card.nameText.setColor(player.locked ? '#2ed573' : card.color);
     }
 
-    const angles = [...this.contestants.values()]
-      .map((contestant) => `P${contestant.playerId} ${contestant.offBy.toFixed(0)}°`)
+    const angles = this.state.players
+      .map((player) => `P${player.id} ${player.offBy.toFixed(0)}°`)
       .join(' ');
     session.status =
-      `freeze-frame ${this.phase}  라운드 ${this.round}  자세 ${this.pose.key}  ` +
-      `허용 ${this.tolerance.toFixed(0)}°  ${angles}`;
+      `freeze-frame ${phase}  라운드 ${this.state.round}  자세 ${this.state.pose.key}  ` +
+      `허용 ${this.state.tolerance.toFixed(0)}°  ` +
+      `유지 ${(this.state.freezeMs / 1000).toFixed(1)}s  ${angles}`;
+  }
+
+  private phaseMessage(locked: number): string {
+    if (this.state.players.length === 0) return '폰을 연결하세요 (?fake=1 로 키보드 사용)';
+    const waiting = this.state.players.filter((player) => !player.reference).length;
+    switch (this.state.phase) {
+      case 'ready':
+        return this.state.flatWarning === null
+          ? `편한 자세로 폰을 들고 A — ${waiting}명 남음 (그 자세가 기준이 됩니다)`
+          : `P${this.state.flatWarning}: 폰을 세워서 들고 다시 A (눕히면 기울이기 자세가 안 나옵니다)`;
+      case 'holding':
+        return (
+          `${(this.state.freezeMs / 1000).toFixed(1)}초 동안 유지 — ` +
+          `${locked}/${alivePlayers(this.state).length} 성공   ` +
+          `(허용 ${this.state.tolerance.toFixed(0)}°)`
+        );
+      case 'reveal':
+        return `${this.state.round}라운드 결과 — ${locked}명 성공`;
+      default:
+        return `${this.winnerLine()}   ·   A: 다시`;
+    }
+  }
+
+  private winnerLine(): string {
+    const best = leader(this.state);
+    if (!best) return '';
+    const card = this.cards.get(best.id);
+    const name = card?.nameText.text ?? `P${best.id}`;
+    return this.state.players.length === 1
+      ? `${this.state.round - 1}라운드 버팀 — ${best.score}점`
+      : `${name} 승리 — ${best.score}점`;
   }
 }

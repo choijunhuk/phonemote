@@ -138,14 +138,88 @@ export function poseByKey(key: string): NamedPose | undefined {
  * standing perfectly still. Those are filtered out rather than called.
  */
 export function posesUsableFrom(reference: CanonicalVector, minSeparationDeg: number): NamedPose[] {
+  return posesUsableFor([reference], minSeparationDeg);
+}
+
+/**
+ * The poses worth asking of a whole room at once.
+ *
+ * With one reference this is the rule above. With several it is the same rule
+ * applied to every grip, because a pose only has to be invisible from one of
+ * them to be unfair: that player scores by standing still while everyone else
+ * has to move. Two people holding their phones differently is the normal case,
+ * not the exception, so this is the version the game calls.
+ */
+export function posesUsableFor(
+  references: readonly CanonicalVector[],
+  minSeparationDeg: number,
+): NamedPose[] {
+  if (references.length === 0) return [...POSES];
+
+  const strict = posesVisibleTo(references, minSeparationDeg, references.length);
+  if (strict.length >= MIN_POOL) return strict;
+
+  // Nothing the whole room can show. That is not a rare case: gravity along the
+  // phone's aim kills every tilt, gravity along its right edge kills every
+  // aim, and two people holding their phones those two ways between them rule
+  // out everything. Demanding unanimity there leaves one pose, which the game
+  // would then call every round forever. A pose most of the room can perform is
+  // a better round than the same pose for the rest of the game.
+  for (let needed = references.length - 1; needed > 1; needed--) {
+    const relaxed = posesVisibleTo(references, minSeparationDeg, needed);
+    if (relaxed.length >= MIN_POOL) return relaxed;
+  }
+  return posesVisibleTo(references, minSeparationDeg, 1);
+}
+
+/** A pool this small means the same pose every round. */
+const MIN_POOL = 3;
+
+function posesVisibleTo(
+  references: readonly CanonicalVector[],
+  minSeparationDeg: number,
+  needed: number,
+): NamedPose[] {
+  const visible = (pose: NamedPose, reference: CanonicalVector): boolean =>
+    pose.angleDeg === 0 ||
+    angleBetweenDeg(expectedUp(pose, reference), reference) >= minSeparationDeg;
+
   const usable: NamedPose[] = [];
   for (const pose of POSES) {
-    const target = expectedUp(pose, reference);
-    if (pose.angleDeg !== 0 && angleBetweenDeg(target, reference) < minSeparationDeg) continue;
-    const clashes = usable.some(
-      (other) => angleBetweenDeg(expectedUp(other, reference), target) < minSeparationDeg,
+    if (references.filter((reference) => visible(pose, reference)).length < needed) continue;
+
+    // And distinguishable from every pose already in the pool: two prompts that
+    // mean the same hold is worse than one prompt fewer. Only grips that can
+    // see both poses get a say — a grip that cannot see either of them thinks
+    // every pose is the same hold, and letting it object would veto the entire
+    // list on everyone else's behalf.
+    const clashes = usable.some((other) =>
+      references.some(
+        (reference) =>
+          visible(pose, reference) &&
+          visible(other, reference) &&
+          angleBetweenDeg(expectedUp(other, reference), expectedUp(pose, reference)) <
+            minSeparationDeg,
+      ),
     );
     if (!clashes) usable.push(pose);
   }
   return usable;
+}
+
+/** How far off the screen-normal a grip may be and still count as flat. */
+export const FLAT_GRIP_DEG = 25;
+
+/**
+ * Whether this grip is a phone lying flat, screen up or down.
+ *
+ * Gravity is then along the phone's own aiming axis, and every roll pose in the
+ * list turns about exactly that axis — so none of them move gravity at all and
+ * half the game silently disappears. Worth saying out loud rather than quietly
+ * dealing a smaller deck.
+ */
+export function isFlatGrip(reference: CanonicalVector): boolean {
+  const flat = { x: 0, y: 0, z: 1 };
+  const angle = angleBetweenDeg(reference, flat);
+  return Math.min(angle, 180 - angle) < FLAT_GRIP_DEG;
 }

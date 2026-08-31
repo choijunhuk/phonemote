@@ -4,10 +4,12 @@ import {
   POSES,
   angleBetweenDeg,
   expectedUp,
+  isFlatGrip,
   poseByKey,
   poseCloseness,
   poseMatches,
   poseOffByDeg,
+  posesUsableFor,
   posesUsableFrom,
   rotateAbout,
 } from '../pose.js';
@@ -248,5 +250,46 @@ describe('the pose list', () => {
   it('looks a pose up by key', () => {
     expect(poseByKey('aim-up')?.label).toBe('화면을 바닥으로 눕히기');
     expect(poseByKey('nonsense')).toBeUndefined();
+  });
+});
+
+describe('choosing poses for a room', () => {
+  it('drops a pose that only one of the grips cannot show', () => {
+    // One player holding the phone upright, one with it flat on the table. A
+    // roll is a real movement for the first and no movement at all for the
+    // second, who would score every time by doing nothing.
+    const upright = LEVEL_GRIP;
+    const flat = upFor(0, 0);
+    const usable = posesUsableFor([upright, flat], 30).map((pose) => pose.key);
+    expect(usable).not.toContain('tilt-right');
+    expect(usable).toContain('aim-up');
+  });
+
+  it('matches the single-grip rule when there is only one grip', () => {
+    for (const grip of [LEVEL_GRIP, upFor(0, 0), upFor(35, -65)]) {
+      expect(posesUsableFor([grip], 30).map((pose) => pose.key)).toEqual(
+        posesUsableFrom(grip, 30).map((pose) => pose.key),
+      );
+    }
+  });
+
+  it('still leaves something to call for a mixed room', () => {
+    expect(posesUsableFor([LEVEL_GRIP, upFor(0, 0), upFor(90, -90)], 30).length).toBeGreaterThan(1);
+  });
+
+  it('offers everything when nobody has calibrated yet', () => {
+    expect(posesUsableFor([], 30)).toHaveLength(POSES.length);
+  });
+});
+
+describe('spotting a phone calibrated flat', () => {
+  it('knows a phone lying on its back or its face', () => {
+    expect(isFlatGrip(upFor(0, 0))).toBe(true);
+    expect(isFlatGrip({ x: 0, y: 0, z: -1 })).toBe(true);
+  });
+
+  it('does not accuse a phone that is being held up', () => {
+    expect(isFlatGrip(LEVEL_GRIP)).toBe(false);
+    expect(isFlatGrip(upFor(0, -90))).toBe(false);
   });
 });
