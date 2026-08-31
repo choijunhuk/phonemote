@@ -54,8 +54,13 @@ export type GameAction =
       playerId: number;
       /** 0 at the detection threshold, 1 at full strength. */
       strength: number;
+      /** Where the phone's tip travelled, in canonical axes. */
       direction: CanonicalVector;
       direction8: Direction8;
+      /** 'strike' when this burst reversed a recent weaker one. */
+      phase: 'strike' | 'single';
+      /** Peak angular rate of the burst, deg/s. */
+      peakRate: number;
       timestamp: number;
     }
   | { kind: 'tilt'; playerId: number; x: number; y: number }

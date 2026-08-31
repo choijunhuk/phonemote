@@ -54,12 +54,12 @@ function frame(spec: FrameSpec, seq: number): SensorFrame {
     playerId: 1,
     seq,
     timestamp: spec.t,
-    // Landscape-primary held level, aiming north (ARCHITECTURE.md 5.7).
-    orientation: spec.orientation ?? { alpha: 90, beta: 0, gamma: -90 },
+    // Portrait held upright, the reference hold (ARCHITECTURE.md 5.1).
+    orientation: spec.orientation ?? { alpha: 0, beta: 90, gamma: 0 },
     rotationRate: spec.rotationRate ?? { alpha: 0, beta: 0, gamma: 0 },
     acceleration: spec.acceleration ?? { x: 0, y: 0, z: 0 },
     buttons: spec.buttons ?? 0,
-    screenOrientation: 1,
+    screenOrientation: 0,
     version: SENSOR_FRAME_VERSION,
     motionSeq: spec.motionSeq,
     flags: SENSOR_FLAG.LINEAR_ACCEL | SENSOR_FLAG.ROTATION_RATE | SENSOR_FLAG.ORIENTATION,
@@ -119,11 +119,13 @@ function sensorStall(): FrameSpec[] {
   const live: FrameSpec[] = Array.from({ length: 2 * HZ }, (_, i) => ({
     t: i * STEP_MS,
     motionSeq: i,
-    rotationRate: { alpha: 0, beta: -40, gamma: 0 },
+    rotationRate: { alpha: 0, beta: 0, gamma: -40 },
     acceleration: { x: 0, y: 0, z: -3 },
   }));
 
-  const frozen = { alpha: 0, beta: -40, gamma: 0 };
+  // Frozen well above the arming rate: a stalled sensor stuck mid-swing is the
+  // case that used to produce an endless train of phantom swings.
+  const frozen = { alpha: 0, beta: 0, gamma: -600 };
   const stuckAt = live.length - 1;
   // The keep-alive repeats the last reading, timestamp and motionSeq included:
   // every frame here is identical, which is the whole point.
@@ -139,7 +141,10 @@ function sensorStall(): FrameSpec[] {
 
 /**
  * Ten deliberate swings, 800 ms apart: a burst that ramps, peaks near what a
- * real phone reports, and settles.
+ * real phone reports (914 deg/s in the recorded session), and settles.
+ *
+ * The rotation is what the detector segments on; the acceleration is along for
+ * the ride, as it is on a real phone.
  */
 function swings(count: number): FrameSpec[] {
   const specs: FrameSpec[] = [];
@@ -156,7 +161,9 @@ function swings(count: number): FrameSpec[] {
       specs.push({
         t: motionSeq * STEP_MS,
         motionSeq,
-        rotationRate: { alpha: 0, beta: -shape * 400, gamma: 0 },
+        // In portrait, canonical yaw is -rotationRate.gamma, so this sweeps the
+        // phone's tip to the right at up to 900 deg/s.
+        rotationRate: { alpha: 0, beta: 0, gamma: -shape * 900 },
         acceleration: { x: 0, y: 0, z: -magnitude },
       });
       motionSeq++;

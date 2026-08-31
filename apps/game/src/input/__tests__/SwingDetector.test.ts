@@ -1,204 +1,200 @@
 import { describe, expect, it } from 'vitest';
 import {
-  SWING_CAPTURE_WINDOW_MS,
+  SWING_ARM_SAMPLES,
   SWING_COOLDOWN_MS,
-  SWING_MAX,
-  SWING_MIN_WINDOW_MS,
-  SWING_QUIET_MS,
-  SWING_THRESHOLD,
+  SWING_OMEGA_MAX,
+  SWING_OMEGA_ON,
   SwingDetector,
   direction8Of,
   swingStrength,
+  tipTravel,
+  type SwingEvent,
 } from '../SwingDetector.js';
-import type { CanonicalSensorFrame, CanonicalVector, GameAction } from '../types.js';
-import type { SwingEvent as DetectorEvent } from '../SwingDetector.js';
+import type { CanonicalSensorFrame } from '../types.js';
 
-function frame(timestamp: number, acceleration: CanonicalVector): CanonicalSensorFrame {
+/**
+ * Swings are segmented on angular velocity, so these drive rotation rates
+ * rather than acceleration. The numbers come from a recorded session: a
+ * deliberate swing peaked at 914 deg/s, a purposeful slow turn at 247.
+ */
+
+const STEP_MS = 1000 / 60;
+
+function frame(
+  t: number,
+  rate: { yaw?: number; pitch?: number; roll?: number },
+): CanonicalSensorFrame {
   return {
     playerId: 1,
     seq: 0,
-    timestamp,
+    timestamp: t,
     dt: 1 / 60,
     orientation: { yaw: 0, pitch: 0, roll: 0 },
     up: { x: 0, y: 1, z: 0 },
-    angularVelocity: { yaw: 0, pitch: 0, roll: 0 },
-    acceleration,
+    angularVelocity: { yaw: rate.yaw ?? 0, pitch: rate.pitch ?? 0, roll: rate.roll ?? 0 },
+    acceleration: { x: 0, y: 0, z: 0 },
     buttons: 0,
   };
 }
 
-const STILL: CanonicalVector = { x: 0, y: 0, z: 0 };
-
-/** One swing: a burst that peaks at `peak`, then the arm settles. */
-function swingOnce(
+/**
+ * One burst: a rise to `peak`, then a fall. `axis` picks which canonical rate
+ * carries it, which is what decides the reported direction.
+ */
+function burst(
   detector: SwingDetector,
   startAt: number,
   peak: number,
-  axis: CanonicalVector = { x: 0, y: 0, z: -1 },
-): DetectorEvent[] {
-  const events: DetectorEvent[] = [];
-  const push = (t: number, magnitude: number): void => {
-    const event = detector.update(
-      frame(t, { x: axis.x * magnitude, y: axis.y * magnitude, z: axis.z * magnitude }),
-    );
+  axis: 'yaw' | 'pitch' = 'yaw',
+  samples = 8,
+): SwingEvent[] {
+  const events: SwingEvent[] = [];
+  for (let i = 0; i <= samples; i++) {
+    const shape = Math.sin((i / samples) * Math.PI);
+    const event = detector.update(frame(startAt + i * STEP_MS, { [axis]: peak * shape }));
     if (event) events.push(event);
-  };
-
-  push(startAt, SWING_THRESHOLD + 1);
-  push(startAt + 30, peak);
-  push(startAt + 60, peak * 0.6);
-  // The burst ends by going quiet, not by running out the window.
-  push(startAt + 80, 1);
-  push(startAt + 80 + SWING_QUIET_MS, 1);
+  }
+  // A couple of quiet samples so the burst can end.
+  for (let i = 1; i <= 2; i++) {
+    const event = detector.update(frame(startAt + (samples + i) * STEP_MS, {}));
+    if (event) events.push(event);
+  }
   return events;
 }
 
 describe('strength', () => {
-  it('is 0 at the threshold and 1 at the maximum', () => {
-    expect(swingStrength(SWING_THRESHOLD)).toBe(0);
-    expect(swingStrength(SWING_MAX)).toBe(1);
+  it('is 0 at the arming rate and 1 at the maximum', () => {
+    expect(swingStrength(SWING_OMEGA_ON)).toBe(0);
+    expect(swingStrength(SWING_OMEGA_MAX)).toBe(1);
   });
 
-  it('clamps beyond the maximum', () => {
-    expect(swingStrength(SWING_MAX + 40)).toBe(1);
+  it('clamps outside the range', () => {
+    expect(swingStrength(2000)).toBe(1);
     expect(swingStrength(0)).toBe(0);
   });
 
-  it('is linear in between', () => {
-    expect(swingStrength((SWING_THRESHOLD + SWING_MAX) / 2)).toBeCloseTo(0.5, 6);
+  it('separates a flick from a full swing', () => {
+    // The whole point of moving off |a|: these used to be indistinguishable
+    // once acceleration clipped.
+    expect(swingStrength(450)).toBeLessThan(swingStrength(900));
   });
 });
 
-describe('direction8', () => {
-  it('reads the compass off the canonical X-Y plane', () => {
-    expect(direction8Of({ x: 1, y: 0, z: 0 })).toBe('E');
-    expect(direction8Of({ x: 0, y: 1, z: 0 })).toBe('N');
-    expect(direction8Of({ x: -1, y: 0, z: 0 })).toBe('W');
-    expect(direction8Of({ x: 0, y: -1, z: 0 })).toBe('S');
-    expect(direction8Of({ x: 1, y: 1, z: 0 })).toBe('NE');
-    expect(direction8Of({ x: -1, y: 1, z: 0 })).toBe('NW');
-    expect(direction8Of({ x: -1, y: -1, z: 0 })).toBe('SW');
-    expect(direction8Of({ x: 1, y: -1, z: 0 })).toBe('SE');
+describe('where the tip goes', () => {
+  it('sweeps right for a rightward turn', () => {
+    expect(direction8Of(tipTravel(30, 0))).toBe('E');
   });
 
-  it('ignores the Z component', () => {
-    expect(direction8Of({ x: 0, y: 1, z: -40 })).toBe('N');
+  it('sweeps up for an upward pitch', () => {
+    expect(direction8Of(tipTravel(0, 30))).toBe('N');
+  });
+
+  it('reads the diagonals', () => {
+    expect(direction8Of(tipTravel(30, 30))).toBe('NE');
+    expect(direction8Of(tipTravel(-30, -30))).toBe('SW');
   });
 });
 
 describe('detection', () => {
-  it('emits exactly one event for one swing', () => {
+  it('emits one event per burst', () => {
     const detector = new SwingDetector();
-    expect(swingOnce(detector, 1000, 30)).toHaveLength(1);
+    expect(burst(detector, 1000, 900)).toHaveLength(1);
   });
 
-  it('reports the peak, not the first sample over the threshold', () => {
+  it('ignores a deliberate slow turn', () => {
+    // 247 deg/s was the fastest a purposeful turn reached on the real phone.
     const detector = new SwingDetector();
-    const [event] = swingOnce(detector, 1000, SWING_MAX);
-    expect(event?.strength).toBe(1);
+    expect(burst(detector, 1000, 247)).toHaveLength(0);
   });
 
-  it('stays silent below the threshold', () => {
+  it('ignores a single spike', () => {
     const detector = new SwingDetector();
-    for (let t = 0; t < 500; t += 16) {
-      expect(detector.update(frame(t, { x: 0, y: 0, z: -(SWING_THRESHOLD - 0.5) }))).toBeNull();
-    }
+    expect(SWING_ARM_SAMPLES).toBeGreaterThan(1);
+    detector.update(frame(0, { yaw: 1200 }));
+    const after = detector.update(frame(STEP_MS, {}));
+    expect(after).toBeNull();
   });
 
-  it('ignores a second swing during the cooldown', () => {
+  it('fires while the swing is still recent, not a window later', () => {
     const detector = new SwingDetector();
-    swingOnce(detector, 1000, 30);
-    const during = swingOnce(detector, 1000 + 80 + SWING_QUIET_MS + 10, 35);
-    expect(during).toHaveLength(0);
+    const [event] = burst(detector, 0, 900);
+    // The burst peaks around 65 ms in; firing on its decay should land close.
+    expect(event?.timestamp).toBeLessThan(150);
+  });
+
+  it('reports the strength of the peak', () => {
+    const detector = new SwingDetector();
+    const [event] = burst(detector, 1000, 900);
+    expect(event?.peakRate).toBeGreaterThan(850);
+    expect(event?.strength).toBeGreaterThan(0.9);
+  });
+
+  it('reports where the tip travelled, not the axis it turned about', () => {
+    const detector = new SwingDetector();
+    const [right] = burst(detector, 1000, 900, 'yaw');
+    expect(right?.direction8).toBe('E');
+
+    const other = new SwingDetector();
+    const [up] = burst(other, 1000, 900, 'pitch');
+    expect(up?.direction8).toBe('N');
+  });
+
+  it('ignores a burst that lives entirely inside the cooldown', () => {
+    const detector = new SwingDetector();
+    const [first] = burst(detector, 0, 900);
+    expect(first).toBeDefined();
+
+    // Short enough to start and finish before the cooldown ends. A burst that
+    // merely starts inside it is a different matter: the cooldown blocks
+    // starting a capture, not the swing that follows the one just reported.
+    const firedAt = first?.timestamp ?? 0;
+    expect(burst(detector, firedAt + 5, 900, 'yaw', 2)).toHaveLength(0);
   });
 
   it('accepts the next swing once the cooldown has passed', () => {
     const detector = new SwingDetector();
-    swingOnce(detector, 1000, 30);
-    const emittedAt = 1000 + 80 + SWING_QUIET_MS;
-    const after = swingOnce(detector, emittedAt + SWING_COOLDOWN_MS + 1, 35);
-    expect(after).toHaveLength(1);
+    const [first] = burst(detector, 0, 900);
+    const firedAt = first?.timestamp ?? 0;
+    expect(burst(detector, firedAt + SWING_COOLDOWN_MS + 400, 900)).toHaveLength(1);
   });
 
-  it('reports the direction of the peak', () => {
+  it('stays silent while the phone is still', () => {
     const detector = new SwingDetector();
-    const [event] = swingOnce(detector, 1000, 30, { x: 0, y: 1, z: 0 });
-    expect(event?.direction8).toBe('N');
-  });
-
-  it('carries the player id and the phone timestamp', () => {
-    const detector = new SwingDetector();
-    const [event] = swingOnce(detector, 5000, 60);
-    expect(event?.playerId).toBe(1);
-    // Fired on the sample where the burst had clearly subsided, which is what
-    // keeps the hit feeling immediate rather than a fixed window late.
-    expect(event?.timestamp).toBeLessThanOrEqual(5000 + SWING_CAPTURE_WINDOW_MS);
-    expect(event?.timestamp).toBeGreaterThanOrEqual(5000 + SWING_MIN_WINDOW_MS);
-  });
-
-  it('reports the peak of the whole burst, not its opening', () => {
-    const detector = new SwingDetector();
-    const push = (t: number, magnitude: number): DetectorEvent | null =>
-      detector.update(frame(t, { x: 0, y: 0, z: -magnitude }));
-
-    expect(push(0, 30)).toBeNull();
-    // A dip mid-swing must not end the burst and understate the strength.
-    expect(push(20, 28)).toBeNull();
-    expect(push(40, 95)).toBeNull();
-    expect(push(60, 5)).toBeNull();
-
-    const event = push(60 + SWING_QUIET_MS, 4);
-    expect(event).not.toBeNull();
-    expect(event?.strength).toBe(1);
-  });
-
-  it('still sees the strike that follows a backswing', () => {
-    // The regression that made tennis feel broken: the backswing claimed the
-    // event and the strike landed inside the cooldown.
-    const detector = new SwingDetector();
-    const push = (t: number, magnitude: number): DetectorEvent | null =>
-      detector.update(frame(t, { x: 0, y: 0, z: -magnitude }));
-
-    const events: DetectorEvent[] = [];
-    const record = (t: number, magnitude: number): void => {
-      const event = push(t, magnitude);
-      if (event) events.push(event);
-    };
-
-    // Backswing, then quiet, then the strike 200 ms after it started.
-    record(0, 40);
-    record(30, 35);
-    record(60, 3);
-    record(110, 2);
-    record(200, 70);
-    record(230, 100);
-    record(270, 4);
-    record(320, 3);
-
-    expect(events).toHaveLength(2);
-    expect(events[1]?.strength).toBeGreaterThan(events[0]?.strength ?? 1);
+    for (let t = 0; t < 2000; t += STEP_MS) {
+      expect(detector.update(frame(t, { yaw: 3, pitch: -2, roll: 1 }))).toBeNull();
+    }
   });
 
   it('forgets everything on reset', () => {
     const detector = new SwingDetector();
-    swingOnce(detector, 1000, 30);
+    burst(detector, 0, 900);
     detector.reset();
-    expect(swingOnce(detector, 1050, 30)).toHaveLength(1);
-  });
-
-  it('stays quiet while the phone is still', () => {
-    const detector = new SwingDetector();
-    for (let t = 0; t < 1000; t += 16) expect(detector.update(frame(t, STILL))).toBeNull();
+    expect(burst(detector, 50, 900)).toHaveLength(1);
   });
 });
 
-/** A detector event must spread straight into the scene-facing action. */
-const scenePayload: GameAction = {
-  kind: 'swing',
-  playerId: 1,
-  strength: 1,
-  direction: STILL,
-  direction8: 'N',
-  timestamp: 0,
-};
-void scenePayload;
+describe('telling a strike from a backswing', () => {
+  it('marks a stronger reversal as the strike', () => {
+    const detector = new SwingDetector();
+    // The backswing cannot be labelled as it happens; only the strike can.
+    const [windup] = burst(detector, 0, 500, 'yaw');
+    expect(windup?.phase).toBe('single');
+
+    const [strike] = burst(detector, 250, -900, 'yaw');
+    expect(strike?.phase).toBe('strike');
+  });
+
+  it('does not call a repeat in the same direction a strike', () => {
+    const detector = new SwingDetector();
+    burst(detector, 0, 900, 'yaw');
+    const [again] = burst(detector, 250, 900, 'yaw');
+    expect(again?.phase).toBe('single');
+  });
+
+  it('does not link two swings a long way apart', () => {
+    const detector = new SwingDetector();
+    burst(detector, 0, 500, 'yaw');
+    const [later] = burst(detector, 1500, -900, 'yaw');
+    expect(later?.phase).toBe('single');
+  });
+});

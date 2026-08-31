@@ -15,15 +15,30 @@ import { session } from '../session.js';
  * Press r in the lobby to start.
  */
 
-const HOLD_MS = 2500;
-const READY_MS = 1200;
+const HOLD_MS = 1200;
 const SAMPLE_EVERY_MS = 50;
+/** How long the phone must be still before a pose is recorded, in ms. */
+const STILL_FOR_MS = 500;
+/** deg/s under which the phone counts as still. */
+const STILL_RATE = 25;
+/** deg/s that counts as the swing having happened. */
+const SWING_RATE = 400;
+const GIVE_UP_MS = 15000;
 
 interface Step {
   readonly key: string;
   readonly prompt: string;
   /** What the mapping table says should happen, for the report. */
   readonly expectation: string;
+  /**
+   * 'hold' waits until the phone stops moving, then records the pose. 'motion'
+   * waits for the movement itself and records around it.
+   *
+   * Counting seconds instead cost two steps of the first real session: the
+   * swing happened outside the window, and a flip was still in progress when
+   * recording ended — which showed up as a gravity vector shorter than one.
+   */
+  readonly mode: 'hold' | 'motion';
 }
 
 const STEPS: readonly Step[] = [
@@ -31,23 +46,46 @@ const STEPS: readonly Step[] = [
     key: 'rest',
     prompt: '폰을 세로로 들고 위쪽 끝이 화면을 향하게, 가만히',
     expectation: 'up ≈ (0, 1, 0), 각속도 ≈ 0',
+    mode: 'hold',
   },
-  { key: 'tilt-right', prompt: '오른쪽으로 90도 기울이기 (오른쪽 변이 아래로)', expectation: 'roll +, up ≈ (-1, 0, 0)' },
-  { key: 'tilt-left', prompt: '왼쪽으로 90도 기울이기', expectation: 'roll -, up ≈ (1, 0, 0)' },
+  { key: 'tilt-right', prompt: '오른쪽으로 90도 기울이기 (오른쪽 변이 아래로)', expectation: 'roll +, up ≈ (-1, 0, 0)', mode: 'hold' },
+  { key: 'tilt-left', prompt: '왼쪽으로 90도 기울이기', expectation: 'roll -, up ≈ (1, 0, 0)', mode: 'hold' },
   {
     key: 'aim-up',
     prompt: '화면이 바닥을 보게 눕히기 (뒷면이 천장)',
     expectation: 'up ≈ (0, 0, -1)',
+    mode: 'hold',
   },
   {
     key: 'aim-down',
     prompt: '화면이 하늘을 보게 눕히기',
     expectation: 'up ≈ (0, 0, 1)',
+    mode: 'hold',
   },
-  { key: 'turn-right', prompt: '정면 자세로 돌아와서, 오른쪽으로 천천히 돌리기', expectation: 'yaw rate +' },
-  { key: 'turn-left', prompt: '왼쪽으로 천천히 돌리기', expectation: 'yaw rate -' },
-  { key: 'swing', prompt: '앞으로 한 번 세게 휘두르기', expectation: 'acceleration z 큰 음수' },
-  { key: 'upside-down', prompt: '세로 그대로 위아래만 거꾸로 뒤집기', expectation: 'up ≈ (0, -1, 0)' },
+  {
+    key: 'turn-right',
+    prompt: '정면으로 돌아와서, 오른쪽으로 한 번 돌리기',
+    expectation: 'yaw rate +',
+    mode: 'motion',
+  },
+  {
+    key: 'turn-left',
+    prompt: '왼쪽으로 한 번 돌리기',
+    expectation: 'yaw rate -',
+    mode: 'motion',
+  },
+  {
+    key: 'swing',
+    prompt: '테니스 치듯 한 번 세게 휘두르기',
+    expectation: '각속도 피크 큼, tip 이동 방향',
+    mode: 'motion',
+  },
+  {
+    key: 'upside-down',
+    prompt: '세로 그대로 위아래만 거꾸로 뒤집어 들기',
+    expectation: 'up ≈ (0, -1, 0)',
+    mode: 'hold',
+  },
 ];
 
 interface Sample {
@@ -136,27 +174,60 @@ export class AxisRecorder {
     };
   }
 
-  private async collect(playerId: number, step: Step, index: number): Promise<Sample[]> {
-    const samples: Sample[] = [];
+  private rateOf(sample: Sample): number {
+    const { yawRate, pitchRate, rollRate } = sample.canonical;
+    return Math.hypot(yawRate, pitchRate, rollRate);
+  }
 
-    for (let waited = 0; waited < READY_MS; waited += 100) {
-      const left = ((READY_MS - waited) / 1000).toFixed(1);
+  /**
+   * Waits for the phone to be doing the thing, then records.
+   *
+   * A hold is recorded once the phone has been still for half a second, so a
+   * pose is never captured mid-flip. A motion is recorded once the rate crosses
+   * the swing line, and keeps the samples leading up to it, so the movement is
+   * in the window rather than the player's guess at when the window was.
+   */
+  private async collect(playerId: number, step: Step, index: number): Promise<Sample[]> {
+    const head = `<h2>${index + 1} / ${STEPS.length}</h2><p class="prompt">${step.prompt}</p>`;
+    const rolling: Sample[] = [];
+    const started = performance.now();
+    let stillSince: number | null = null;
+
+    // Wait for the cue.
+    for (;;) {
+      const sample = this.samplePlayer(playerId);
+      const now = performance.now();
+      if (sample) {
+        rolling.push(sample);
+        if (rolling.length > 40) rolling.shift();
+
+        const rate = this.rateOf(sample);
+        if (step.mode === 'hold') {
+          if (rate < STILL_RATE) stillSince ??= now;
+          else stillSince = null;
+          if (stillSince !== null && now - stillSince >= STILL_FOR_MS) break;
+        } else if (rate > SWING_RATE) {
+          break;
+        }
+      }
+
+      if (now - started > GIVE_UP_MS) break;
       this.show(
-        `<h2>${index + 1} / ${STEPS.length}</h2>` +
-          `<p class="prompt">${step.prompt}</p>` +
-          `<p class="countdown">${left}초 후 측정</p>`,
+        head +
+          (step.mode === 'hold'
+            ? '<p class="countdown">자세를 만들고 멈추면 자동으로 측정합니다</p>'
+            : '<p class="countdown">동작하면 자동으로 측정합니다</p>'),
       );
-      await wait(100);
+      await wait(SAMPLE_EVERY_MS);
     }
 
+    // Record: for a hold that is the pose itself; for a motion the samples
+    // already captured carry the run-up, and these carry the follow-through.
+    const samples: Sample[] = step.mode === 'motion' ? rolling.slice(-10) : [];
     for (let waited = 0; waited < HOLD_MS; waited += SAMPLE_EVERY_MS) {
       const sample = this.samplePlayer(playerId);
       if (sample) samples.push(sample);
-      this.show(
-        `<h2>${index + 1} / ${STEPS.length}</h2>` +
-          `<p class="prompt">${step.prompt}</p>` +
-          `<p class="recording">측정 중… ${samples.length}개</p>`,
-      );
+      this.show(head + `<p class="recording">측정 중… ${samples.length}개</p>`);
       await wait(SAMPLE_EVERY_MS);
     }
 

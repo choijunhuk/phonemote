@@ -77,7 +77,7 @@ describe('a phone carried at a walk', () => {
 
 describe('a sensor that stops with acceleration frozen high', () => {
   it('produces no swings after it dies', () => {
-    // The frozen reading sits at 60 m/s^2, three times the swing threshold.
+    // The frozen reading sits at 600 deg/s, twice the arming rate.
     const { actions } = replay('sensor-stall.pmtrace', new InputMapper({ swing: true }));
     expect(swings(actions)).toHaveLength(0);
   });
@@ -107,13 +107,14 @@ describe('ten deliberate swings', () => {
     expect(swings(actions)).toHaveLength(10);
   });
 
-  it('reports them at full strength and pointing away from the player', () => {
+  it('reports them at full strength, sweeping the way the phone turned', () => {
     const { actions } = replay('swing-forward.pmtrace', new InputMapper({ swing: true }));
     for (const action of swings(actions)) {
       if (action.kind !== 'swing') continue;
       expect(action.strength).toBeGreaterThan(0.9);
-      // A forward thrust accelerates along canonical -Z.
-      expect(action.direction.z).toBeLessThan(0);
+      expect(action.peakRate).toBeGreaterThan(800);
+      // The trace sweeps right, so the tip travels east.
+      expect(action.direction8).toBe('E');
     }
   });
 });

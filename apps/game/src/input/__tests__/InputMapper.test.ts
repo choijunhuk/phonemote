@@ -102,18 +102,31 @@ describe('modes', () => {
     expect(recentred?.kind === 'pointer_move' && recentred.x).toBe(0.5);
   });
 
-  it('emits a swing when the phone is thrust forward', () => {
+  it('emits a swing when the phone is swept', () => {
+    // Detection is on rotation now: an arm swing is a rotation, and |a| points
+    // at the shoulder rather than along the travel.
     const mapper = new InputMapper({ swing: true });
-    mapper.update(raw({ timestamp: 0 }));
-    mapper.update(raw({ timestamp: 16, acceleration: { x: 0, y: 0, z: -40 } }));
-    mapper.update(raw({ timestamp: 60, acceleration: { x: 0, y: 0, z: -90 } }));
-    mapper.update(raw({ timestamp: 130, acceleration: { x: 0, y: 0, z: 0 } }));
-    const actions = mapper.update(raw({ timestamp: 190, acceleration: { x: 0, y: 0, z: 0 } }));
+    const actions: GameAction[] = [];
+    // These frames are landscape, where canonical yaw is -rotationRate.beta.
+    const sweep = (t: number, rate: number): void => {
+      actions.push(
+        ...mapper.update(raw({ timestamp: t, rotationRate: { alpha: 0, beta: -rate, gamma: 0 } })),
+      );
+    };
+    // Ramp up, peak, fall away. The event lands on the frame where the rate has
+    // clearly passed its peak, which is partway through this, not at the end.
+    sweep(0, 0);
+    sweep(16, 500);
+    sweep(32, 900);
+    sweep(48, 700);
+    sweep(64, 0);
+    sweep(80, 0);
 
     const swing = actions.find((action) => action.kind === 'swing');
     expect(swing).toBeDefined();
     if (swing?.kind !== 'swing') return;
     expect(swing.strength).toBe(1);
+    expect(swing.direction8).toBe('E');
     expect(swing.playerId).toBe(1);
   });
 
