@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import {
   POSES,
+  angleBetweenDeg,
   poseCloseness,
-  poseMatches,
   rotateFromReference,
   type NamedPose,
 } from '../../input/pose.js';
@@ -23,12 +23,19 @@ import { sfx } from '../../ui/audio.js';
  * It is also the first thing here that four phones play at once.
  */
 
-const ROUND_SECONDS = 2.2;
+const ROUND_SECONDS = 3;
 const REVEAL_SECONDS = 1.4;
-const TOLERANCE_START = 35;
-const TOLERANCE_FLOOR = 16;
+const TOLERANCE_START = 45;
+const TOLERANCE_FLOOR = 20;
 /** Rounds survived before the tolerance stops tightening. */
 const TIGHTEN_OVER = 8;
+/**
+ * Judging starts once this much of the round has passed. Before that the
+ * player is still moving, and their best moment on the way is not the pose.
+ */
+const JUDGE_AFTER = 0.45;
+/** Nobody should be stuck on the setup screen because a prompt was missed. */
+const AUTO_CALIBRATE_SECONDS = 4;
 
 type Phase = 'ready' | 'holding' | 'reveal' | 'over';
 
@@ -44,6 +51,13 @@ interface Contestant {
   out: boolean;
   closeness: number;
   held: boolean;
+  /** Degrees away from the called pose, so a miss can be read rather than guessed. */
+  offBy: number;
+  /**
+   * Closest they got while the round was being judged. Reading the instant the
+   * timer expires punishes a hand that arrives and then breathes.
+   */
+  bestOffBy: number;
   /**
    * The hold this player calibrated as their own "level". Poses are written
    * against the canonical landscape grip, but nobody holds a phone to a
@@ -61,6 +75,7 @@ export class FreezeFrame extends Phaser.Scene {
   private round = 0;
   private pose: NamedPose = POSES[0] ?? { key: 'level', label: '똑바로', up: { x: 0, y: 1, z: 0 } };
   private tolerance = TOLERANCE_START;
+  private readyFor = 0;
 
   private readonly contestants = new Map<number, Contestant>();
   private poseText!: Phaser.GameObjects.Text;
@@ -130,8 +145,12 @@ export class FreezeFrame extends Phaser.Scene {
 
           // Judged in the player's own frame, so the grip they chose is level.
           const aligned = rotateFromReference(action.up, contestant.reference);
+          contestant.offBy = angleBetweenDeg(this.pose.up, aligned);
           contestant.closeness = poseCloseness(this.pose.up, aligned, this.tolerance);
-          contestant.held = poseMatches(this.pose.up, aligned, this.tolerance);
+          contestant.held = contestant.offBy <= this.tolerance;
+          if (this.phase === 'holding' && this.timer <= ROUND_SECONDS * (1 - JUDGE_AFTER)) {
+            contestant.bestOffBy = Math.min(contestant.bestOffBy, contestant.offBy);
+          }
           return;
         }
         if (action.kind !== 'button_down') return;
@@ -153,6 +172,16 @@ export class FreezeFrame extends Phaser.Scene {
 
   override update(_time: number, delta: number): void {
     const dt = Math.min(delta / 1000, 1 / 30);
+
+    if (this.phase === 'ready') {
+      this.readyFor += dt;
+      // Adopt whatever they are holding rather than sit on a prompt forever.
+      if (this.readyFor >= AUTO_CALIBRATE_SECONDS) {
+        for (const contestant of this.contestants.values()) {
+          if (!contestant.reference && contestant.lastUp) this.pressA(contestant.playerId);
+        }
+      }
+    }
 
     switch (this.phase) {
       case 'holding': {
@@ -187,6 +216,7 @@ export class FreezeFrame extends Phaser.Scene {
     contestant.reference = contestant.lastUp;
     contestant.closeness = 1;
     contestant.held = true;
+    contestant.offBy = 0;
     session.vibrate(playerId, [30]);
     session.log(`기준 자세 설정 P${playerId}`);
 
@@ -216,6 +246,7 @@ export class FreezeFrame extends Phaser.Scene {
 
     this.phase = 'holding';
     this.timer = ROUND_SECONDS;
+    for (const contestant of this.contestants.values()) contestant.bestOffBy = 180;
     sfx.tick();
   }
 
@@ -226,7 +257,7 @@ export class FreezeFrame extends Phaser.Scene {
     let anyHeld = false;
     for (const contestant of this.contestants.values()) {
       if (contestant.out) continue;
-      if (contestant.held) {
+      if (contestant.bestOffBy <= this.tolerance) {
         contestant.score++;
         anyHeld = true;
         session.vibrate(contestant.playerId, [40]);
@@ -273,7 +304,7 @@ export class FreezeFrame extends Phaser.Scene {
       const scoreText = this.add
         .text(0, 2, '0', {
           fontFamily: 'ui-monospace, monospace',
-          fontSize: '34px',
+          fontSize: '26px',
           color: '#f1f3f8',
         })
         .setOrigin(0.5);
@@ -295,6 +326,8 @@ export class FreezeFrame extends Phaser.Scene {
         out: false,
         closeness: 0,
         held: false,
+        offBy: 180,
+        bestOffBy: 180,
         reference: carried.get(player.id)?.reference ?? null,
         lastUp: carried.get(player.id)?.lastUp ?? null,
       });
@@ -323,13 +356,22 @@ export class FreezeFrame extends Phaser.Scene {
     );
 
     for (const contestant of this.contestants.values()) {
-      contestant.scoreText.setText(String(contestant.score));
+      // The angle is the whole diagnosis: a miss at 20 degrees is a tolerance
+      // question, a miss at 90 means the pose does not mean what it says.
+      const detail = contestant.reference
+        ? `${contestant.offBy.toFixed(0)}°`
+        : 'A를 누르세요';
+      contestant.scoreText.setText(`${contestant.score}   ${detail}`);
+      contestant.meter.setFillStyle(contestant.held ? 0x2ed573 : Number(`0x${contestant.color.slice(1)}`));
       contestant.meter.setScale(contestant.closeness, 1);
       contestant.nameText.setColor(contestant.held ? '#2ed573' : contestant.color);
     }
 
+    const angles = [...this.contestants.values()]
+      .map((contestant) => `P${contestant.playerId} ${contestant.offBy.toFixed(0)}°`)
+      .join(' ');
     session.status =
       `freeze-frame ${this.phase}  라운드 ${this.round}  자세 ${this.pose.key}  ` +
-      `허용 ${this.tolerance.toFixed(0)}°`;
+      `허용 ${this.tolerance.toFixed(0)}°  ${angles}`;
   }
 }
