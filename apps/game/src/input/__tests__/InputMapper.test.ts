@@ -91,7 +91,7 @@ describe('modes', () => {
     const mapper = new InputMapper({ pointer: {} });
     mapper.update(raw({ timestamp: 0 }));
     for (let i = 1; i <= 60; i++) {
-      mapper.update(raw({ timestamp: i * 16, rotationRate: { alpha: 0, beta: -60, gamma: 0 } }));
+      mapper.update(raw({ timestamp: i * 16, rotationRate: { alpha: -60, beta: 0, gamma: 0 } }));
     }
     const moved = mapper.update(raw({ timestamp: 2000 }));
     const before = moved.find((a) => a.kind === 'pointer_move');
@@ -107,10 +107,11 @@ describe('modes', () => {
     // at the shoulder rather than along the travel.
     const mapper = new InputMapper({ swing: true });
     const actions: GameAction[] = [];
-    // These frames are landscape, where canonical yaw is -rotationRate.beta.
+    // These frames are landscape, where canonical yaw is -rotationRate.alpha
+    // (ARCHITECTURE.md 5.6).
     const sweep = (t: number, rate: number): void => {
       actions.push(
-        ...mapper.update(raw({ timestamp: t, rotationRate: { alpha: 0, beta: -rate, gamma: 0 } })),
+        ...mapper.update(raw({ timestamp: t, rotationRate: { alpha: -rate, beta: 0, gamma: 0 } })),
       );
     };
     // Ramp up, peak, fall away. The event lands on the frame where the rate has
@@ -150,14 +151,14 @@ describe('a stalled sensor', () => {
     const mapper = new InputMapper({ pointer: {}, tilt: {}, swing: true });
     mapper.update(raw({ timestamp: 0 }));
     const moving = mapper.update(
-      raw({ timestamp: 16, rotationRate: { alpha: 0, beta: -60, gamma: 0 } }),
+      raw({ timestamp: 16, rotationRate: { alpha: -60, beta: 0, gamma: 0 } }),
     );
     const before = moving.find((action) => action.kind === 'pointer_move');
     expect(before?.kind === 'pointer_move' && before.x).toBeGreaterThan(0.5);
 
     // The phone keeps sending, but its sensors have stopped: same motionSeq.
     const frozen = mapper.update({
-      ...raw({ timestamp: 200, rotationRate: { alpha: 0, beta: -60, gamma: 0 } }),
+      ...raw({ timestamp: 200, rotationRate: { alpha: -60, beta: 0, gamma: 0 } }),
       motionSeq: mapper.inputState(1).motionSeq,
     });
 
@@ -234,7 +235,8 @@ describe('canonical snapshot', () => {
   it('exposes the last canonical frame for the debug overlay', () => {
     const mapper = new InputMapper();
     expect(mapper.lastCanonical(1)).toBeNull();
-    mapper.update(raw({ rotationRate: { alpha: 0, beta: 0, gamma: -10 } }));
+    // Landscape: pitch is -rotationRate.beta.
+    mapper.update(raw({ rotationRate: { alpha: 0, beta: -10, gamma: 0 } }));
     expect(mapper.lastCanonical(1)?.angularVelocity.pitch).toBeCloseTo(10, 6);
   });
 

@@ -69,11 +69,13 @@ describe('angular velocity signs', () => {
   const rate = { alpha: 5, beta: 7, gamma: 11 };
 
   it('follows the table for all four orientations', () => {
+    // alpha/beta/gamma are the rates about x/y/z on the real device
+    // (ARCHITECTURE.md 5.4), so with alpha 5, beta 7, gamma 11:
     const expected: Record<ScreenOrientationValue, { pitch: number; yaw: number; roll: number }> = {
-      0: { pitch: 7, yaw: -11, roll: -5 },
-      1: { pitch: -11, yaw: -7, roll: -5 },
-      2: { pitch: -7, yaw: 11, roll: -5 },
-      3: { pitch: 11, yaw: 7, roll: -5 },
+      0: { pitch: 5, yaw: -7, roll: -11 },
+      1: { pitch: -7, yaw: -5, roll: -11 },
+      2: { pitch: -5, yaw: 7, roll: -11 },
+      3: { pitch: 7, yaw: 5, roll: -11 },
     };
     for (const key of [0, 1, 2, 3] as ScreenOrientationValue[]) {
       const { angularVelocity } = normalize(
@@ -87,19 +89,31 @@ describe('angular velocity signs', () => {
   });
 
   it('reports a positive yaw rate when the phone is swept to the right', () => {
-    // Aiming right is a negative rotation about canonical +Y, which in the
-    // canonical pose is the device x axis: rotationRate.beta goes negative.
+    // Portrait: aiming right is a negative rotation about canonical +Y, which is
+    // the device y axis, and this device reports that on beta.
     const { angularVelocity } = normalize(
-      frameWith({ rotationRate: { alpha: 0, beta: -60, gamma: 0 } }),
+      frameWith({ rotationRate: { alpha: 0, beta: -60, gamma: 0 }, screenOrientation: 0 }),
       null,
     );
     expect(angularVelocity.yaw).toBeGreaterThan(0);
   });
 
+  it('reports pitch when the phone is nodded', () => {
+    // The one that was broken: a nod is a rotation about device x, reported on
+    // alpha, and it has to land on pitch rather than leaking into roll.
+    const { angularVelocity } = normalize(
+      frameWith({ rotationRate: { alpha: 90, beta: 0, gamma: 0 }, screenOrientation: 0 }),
+      null,
+    );
+    expect(angularVelocity.pitch).toBeCloseTo(90, 5);
+    expect(angularVelocity.roll).toBeCloseTo(0, 5);
+  });
+
   it('reports the roll rate as the screen rotation axis in every orientation', () => {
+    // Screen rotation is about device z, which this device reports on gamma.
     for (const key of [0, 1, 2, 3] as ScreenOrientationValue[]) {
       const { angularVelocity } = normalize(
-        frameWith({ rotationRate: { alpha: 30, beta: 0, gamma: 0 }, screenOrientation: key }),
+        frameWith({ rotationRate: { alpha: 0, beta: 0, gamma: 30 }, screenOrientation: key }),
         null,
       );
       expect(angularVelocity.roll).toBeCloseTo(-30, 5);

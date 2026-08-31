@@ -134,9 +134,16 @@ export function normalize(frame: SensorFrame, previousTimestamp: number | null):
     screenAngle,
   );
 
-  // rotationRate.alpha/beta/gamma are rates about device z/x/y respectively.
+  // Measured, not assumed: this device reports rotationRate.alpha/beta/gamma as
+  // the rates about x/y/z, where the W3C spec says z/x/y. Correlating the true
+  // body rate — recovered from consecutive orientation matrices — against each
+  // reported channel came out at 0.92, 0.78 and 0.90 straight down the diagonal
+  // across five sessions (ARCHITECTURE.md 5.4).
+  //
+  // Trusting the spec here sent a nod of the phone into roll and left canonical
+  // pitch barely moving, which is why the pointer had no vertical axis.
   const omega = rotateAboutZ(
-    { x: frame.rotationRate.beta, y: frame.rotationRate.gamma, z: frame.rotationRate.alpha },
+    { x: frame.rotationRate.alpha, y: frame.rotationRate.beta, z: frame.rotationRate.gamma },
     screenAngle,
   );
 

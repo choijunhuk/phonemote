@@ -84,11 +84,14 @@ export function swingStrength(peakRate: number): number {
  * - Held like a racket, the far end is the top edge at +Y, and the same
  *   product reduces to the roll.
  *
- * A recorded swing settles which matters: it peaked at 1157 deg/s of roll
- * against 357 of yaw, and integrated to 85 degrees of roll against 47 of yaw.
- * Reading yaw alone described that swing as six degrees of travel in no
- * particular direction. Summing them covers either grip, and a hand somewhere
- * between the two gets a share of each, which is what actually happens.
+ * Summing them covers either grip, and a hand somewhere between the two gets a
+ * share of each, which is what actually happens.
+ *
+ * An earlier version of this comment cited a recorded swing as evidence that
+ * roll dominates. It did not: those numbers came from the rotation rate axes
+ * being misread (ARCHITECTURE.md 5.4), and the same recording is a downward
+ * chop once decoded correctly. The reason to include roll is the geometry
+ * above, not that measurement.
  *
  * Pitch stays the vertical: it tips the far end up or down whichever way the
  * phone is held.

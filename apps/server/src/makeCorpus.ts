@@ -103,7 +103,7 @@ function walkAround(seconds: number): FrameSpec[] {
       t,
       motionSeq: i,
       orientation: { alpha: 90 + stride * 12, beta: stride * 6, gamma: -90 + stride * 8 },
-      rotationRate: { alpha: stride * 40, beta: stride * 55, gamma: stride * 30 },
+      rotationRate: { alpha: stride * 55, beta: stride * 40, gamma: stride * 30 },
       // Walking peaks around 10 m/s^2 including the heel strike.
       acceleration: { x: stride * 4 + random(), y: stride * 3 + random(), z: stride * 9 + random() },
     };
@@ -119,13 +119,14 @@ function sensorStall(): FrameSpec[] {
   const live: FrameSpec[] = Array.from({ length: 2 * HZ }, (_, i) => ({
     t: i * STEP_MS,
     motionSeq: i,
-    rotationRate: { alpha: 0, beta: 0, gamma: -40 },
+    // Portrait: canonical yaw is -beta, so this sweeps the pointer.
+    rotationRate: { alpha: 0, beta: 40, gamma: 0 },
     acceleration: { x: 0, y: 0, z: -3 },
   }));
 
   // Frozen well above the arming rate: a stalled sensor stuck mid-swing is the
   // case that used to produce an endless train of phantom swings.
-  const frozen = { alpha: 0, beta: 0, gamma: -600 };
+  const frozen = { alpha: 0, beta: 600, gamma: 0 };
   const stuckAt = live.length - 1;
   // The keep-alive repeats the last reading, timestamp and motionSeq included:
   // every frame here is identical, which is the whole point.
@@ -161,9 +162,9 @@ function swings(count: number): FrameSpec[] {
       specs.push({
         t: motionSeq * STEP_MS,
         motionSeq,
-        // In portrait, canonical yaw is -rotationRate.gamma, so this sweeps the
+        // In portrait, canonical yaw is -rotationRate.beta, so this sweeps the
         // phone's tip to the right at up to 900 deg/s.
-        rotationRate: { alpha: 0, beta: 0, gamma: -shape * 900 },
+        rotationRate: { alpha: 0, beta: -shape * 900, gamma: 0 },
         acceleration: { x: 0, y: 0, z: -magnitude },
       });
       motionSeq++;
