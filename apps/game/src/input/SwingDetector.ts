@@ -75,15 +75,26 @@ export function swingStrength(peakRate: number): number {
 }
 
 /**
- * Where the phone's tip goes for a given rotation.
+ * Where the far end of the phone goes for a given rotation.
  *
- * A point out along the aim at -Z moves at omega x r, which works out as
- * (yaw, pitch) in canonical X-Y: turning right sweeps the tip right, pitching
- * up sweeps it up. This is what the player sees, and it is what the direction
- * should describe — not the axis the rotation happened about.
+ * Two grips sweep it horizontally, and a swing usually has some of both:
+ *
+ * - Held like a pointer, the far end is the aim at -Z, and a point out there
+ *   moves with omega x r, which reduces to the yaw.
+ * - Held like a racket, the far end is the top edge at +Y, and the same
+ *   product reduces to the roll.
+ *
+ * A recorded swing settles which matters: it peaked at 1157 deg/s of roll
+ * against 357 of yaw, and integrated to 85 degrees of roll against 47 of yaw.
+ * Reading yaw alone described that swing as six degrees of travel in no
+ * particular direction. Summing them covers either grip, and a hand somewhere
+ * between the two gets a share of each, which is what actually happens.
+ *
+ * Pitch stays the vertical: it tips the far end up or down whichever way the
+ * phone is held.
  */
-export function tipTravel(yawDeg: number, pitchDeg: number): CanonicalVector {
-  return { x: yawDeg, y: pitchDeg, z: 0 };
+export function tipTravel(yawDeg: number, pitchDeg: number, rollDeg = 0): CanonicalVector {
+  return { x: yawDeg + rollDeg, y: pitchDeg, z: 0 };
 }
 
 function rateMagnitude(frame: CanonicalSensorFrame): number {
@@ -97,6 +108,7 @@ interface Capture {
   /** Integrated rotation over the burst, in degrees. */
   yaw: number;
   pitch: number;
+  roll: number;
   lastTimestamp: number;
 }
 
@@ -119,6 +131,7 @@ export class SwingDetector {
       // rather than trusting whichever single sample happened to be largest.
       this.capture.yaw += frame.angularVelocity.yaw * dt;
       this.capture.pitch += frame.angularVelocity.pitch * dt;
+      this.capture.roll += frame.angularVelocity.roll * dt;
       if (rate > this.capture.peak) this.capture.peak = rate;
 
       const elapsed = now - this.capture.startedAt;
@@ -126,7 +139,7 @@ export class SwingDetector {
       if (elapsed < SWING_MIN_WINDOW_MS) return null;
       if (!decayed && elapsed < SWING_CAPTURE_WINDOW_MS) return null;
 
-      const direction = tipTravel(this.capture.yaw, this.capture.pitch);
+      const direction = tipTravel(this.capture.yaw, this.capture.pitch, this.capture.roll);
       const peak = this.capture.peak;
       const event: SwingEvent = {
         playerId: frame.playerId,
@@ -151,7 +164,7 @@ export class SwingDetector {
     if (this.armed < SWING_ARM_SAMPLES) return null;
     this.armed = 0;
 
-    this.capture = { startedAt: now, peak: rate, yaw: 0, pitch: 0, lastTimestamp: now };
+    this.capture = { startedAt: now, peak: rate, yaw: 0, pitch: 0, roll: 0, lastTimestamp: now };
     return null;
   }
 

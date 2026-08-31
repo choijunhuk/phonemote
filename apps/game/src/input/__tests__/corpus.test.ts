@@ -119,6 +119,32 @@ describe('ten deliberate swings', () => {
   });
 });
 
+describe('a swing recorded on a real phone', () => {
+  it('is detected exactly once', () => {
+    const { actions } = replay('real-swing.pmtrace', new InputMapper({ swing: true }));
+    expect(swings(actions)).toHaveLength(1);
+  });
+
+  it('is read at full strength, with a direction worth acting on', () => {
+    const { actions } = replay('real-swing.pmtrace', new InputMapper({ swing: true }));
+    const [swing] = swings(actions);
+    if (swing?.kind !== 'swing') throw new Error('no swing');
+
+    expect(swing.strength).toBeGreaterThan(0.8);
+    expect(swing.peakRate).toBeGreaterThan(800);
+    // Reading yaw alone described this swing as six degrees of travel going
+    // nowhere, because the player rolled the phone rather than turning it.
+    expect(Math.hypot(swing.direction.x, swing.direction.y)).toBeGreaterThan(30);
+  });
+});
+
+describe('a phone at rest, recorded on a real phone', () => {
+  it('produces no swings', () => {
+    const { actions } = replay('real-rest.pmtrace', new InputMapper({ swing: true }));
+    expect(swings(actions)).toHaveLength(0);
+  });
+});
+
 describe('the corpus itself', () => {
   it('is v2 frames that survive a decode', () => {
     const { frames } = replay('swing-forward.pmtrace', new InputMapper());

@@ -14,6 +14,8 @@ import { LOG_DIR } from './logs.js';
  */
 
 interface Sample {
+  /** Phone clock, ms; used to weight the integration. */
+  t: number;
   raw: Record<string, number>;
   canonical: Record<string, number>;
 }
@@ -42,6 +44,24 @@ function mean(values: number[]): number {
 function extreme(values: number[]): number {
   // The largest departure from zero, which is what a motion is about.
   return values.reduce((best, value) => (Math.abs(value) > Math.abs(best) ? value : best), 0);
+}
+
+/**
+ * Net rotation over the window, in degrees.
+ *
+ * The largest single sample is a bad summary of a movement: a turn to the right
+ * that begins with the hand settling can show a leftward sample a hair larger
+ * than any rightward one, and the whole step then reads backwards. Integrating
+ * says which way the phone actually ended up going.
+ */
+function integrate(values: number[], step: Step): number {
+  const samples = step.samples;
+  let total = 0;
+  for (let i = 1; i < values.length; i++) {
+    const dt = ((samples[i]?.t ?? 0) - (samples[i - 1]?.t ?? 0)) / 1000;
+    if (dt > 0 && dt < 1) total += ((values[i] ?? 0) + (values[i - 1] ?? 0)) / 2 * dt;
+  }
+  return total;
 }
 
 function column(field: string, step: Step, side: 'raw' | 'canonical'): number[] {
@@ -101,6 +121,11 @@ function report(session: AxisSession): void {
       `   rate peak yaw${fixed(extreme(column('yawRate', step, 'canonical')))}` +
         ` pitch${fixed(extreme(column('pitchRate', step, 'canonical')))}` +
         ` roll${fixed(extreme(column('rollRate', step, 'canonical')))}`,
+    );
+    console.log(
+      `   net turn  yaw${fixed(integrate(column('yawRate', step, 'canonical'), step))}` +
+        ` pitch${fixed(integrate(column('pitchRate', step, 'canonical'), step))}` +
+        ` roll${fixed(integrate(column('rollRate', step, 'canonical'), step))}   (deg)`,
     );
     console.log(
       `   accel pk  x${fixed(extreme(column('accelX', step, 'canonical')))}` +

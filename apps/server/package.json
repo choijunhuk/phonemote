@@ -12,7 +12,8 @@
     "play": "tsx src/index.ts",
     "corpus": "tsx src/makeCorpus.ts",
     "record": "tsx src/index.ts --record",
-    "axis": "tsx src/readAxisLog.ts"
+    "axis": "tsx src/readAxisLog.ts",
+    "trace-from-log": "tsx src/traceFromLog.ts"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
