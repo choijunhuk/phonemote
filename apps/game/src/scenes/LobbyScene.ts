@@ -76,7 +76,7 @@ export class LobbyScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.add
-      .text(width * 0.26, height * 0.29, '폰 Chrome으로 QR을 찍거나 룸 코드를 입력하세요', {
+      .text(width * 0.26, height * 0.29, '폰 Chrome에서 QR 스캔 또는 룸 코드 입력', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '24px',
         color: '#98a0b3',

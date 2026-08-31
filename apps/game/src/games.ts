@@ -127,11 +127,14 @@ export const GAMES: readonly GameDefinition[] = [
         input: { swing: true },
       },
       {
+        // Four, not one: refusing to start practice because a second phone
+        // happens to be connected is a menu telling somebody to unplug a
+        // device. The others watch, and the rules ignore their swings.
         key: 'practice',
         title: '벽치기',
         detail: '벽을 상대로 랠리, 스윙 속도와 파워를 숫자로 표시',
         minPlayers: 1,
-        maxPlayers: 1,
+        maxPlayers: 4,
         input: { swing: true },
       },
     ],

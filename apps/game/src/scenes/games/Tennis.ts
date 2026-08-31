@@ -72,6 +72,12 @@ export class Tennis extends BaseGameScene {
           session.log(`스윙 무시 P${action.playerId} (자리 없음)`);
           return;
         }
+        // Practice is one player against a wall. A second phone in the room is
+        // a spectator, not the wall's arm.
+        if (this.state.config.players === 1 && side !== 1) {
+          session.log(`스윙 무시 P${action.playerId} (연습은 P1만)`);
+          return;
+        }
         const result = swing(
           this.state,
           side,
