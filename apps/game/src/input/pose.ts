@@ -120,10 +120,10 @@ export const POSES: readonly NamedPose[] = [
   { key: 'diagonal-right', label: '오른쪽으로 45도', axis: FORWARD, angleDeg: 45 },
   { key: 'diagonal-left', label: '왼쪽으로 45도', axis: FORWARD, angleDeg: -45 },
   { key: 'upside-down', label: '거꾸로 뒤집기', axis: FORWARD, angleDeg: 180 },
-  { key: 'aim-up', label: '끝을 하늘로', axis: RIGHT, angleDeg: 90 },
-  { key: 'aim-down', label: '끝을 바닥으로', axis: RIGHT, angleDeg: -90 },
-  { key: 'aim-up-half', label: '끝을 45도 위로', axis: RIGHT, angleDeg: 45 },
-  { key: 'aim-down-half', label: '끝을 45도 아래로', axis: RIGHT, angleDeg: -45 },
+  { key: 'aim-up', label: '화면을 바닥으로 눕히기', axis: RIGHT, angleDeg: 90 },
+  { key: 'aim-down', label: '화면을 하늘로 눕히기', axis: RIGHT, angleDeg: -90 },
+  { key: 'aim-up-half', label: '앞으로 45도 눕히기', axis: RIGHT, angleDeg: 45 },
+  { key: 'aim-down-half', label: '뒤로 45도 젖히기', axis: RIGHT, angleDeg: -45 },
 ];
 
 export function poseByKey(key: string): NamedPose | undefined {

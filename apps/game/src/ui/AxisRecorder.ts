@@ -34,12 +34,20 @@ const STEPS: readonly Step[] = [
   },
   { key: 'tilt-right', prompt: '오른쪽으로 90도 기울이기 (오른쪽 변이 아래로)', expectation: 'roll +, up ≈ (-1, 0, 0)' },
   { key: 'tilt-left', prompt: '왼쪽으로 90도 기울이기', expectation: 'roll -, up ≈ (1, 0, 0)' },
-  { key: 'aim-up', prompt: '끝을 하늘로 (폰 뒷면이 천장을 보게)', expectation: 'pitch +, up ≈ (0, 0, -1)' },
-  { key: 'aim-down', prompt: '끝을 바닥으로', expectation: 'pitch -, up ≈ (0, 0, 1)' },
+  {
+    key: 'aim-up',
+    prompt: '화면이 바닥을 보게 눕히기 (뒷면이 천장)',
+    expectation: 'up ≈ (0, 0, -1)',
+  },
+  {
+    key: 'aim-down',
+    prompt: '화면이 하늘을 보게 눕히기',
+    expectation: 'up ≈ (0, 0, 1)',
+  },
   { key: 'turn-right', prompt: '정면 자세로 돌아와서, 오른쪽으로 천천히 돌리기', expectation: 'yaw rate +' },
   { key: 'turn-left', prompt: '왼쪽으로 천천히 돌리기', expectation: 'yaw rate -' },
   { key: 'swing', prompt: '앞으로 한 번 세게 휘두르기', expectation: 'acceleration z 큰 음수' },
-  { key: 'flat', prompt: '화면이 하늘을 보게 평평히 눕히기', expectation: 'up ≈ (0, 0, 1)' },
+  { key: 'upside-down', prompt: '세로 그대로 위아래만 거꾸로 뒤집기', expectation: 'up ≈ (0, -1, 0)' },
 ];
 
 interface Sample {

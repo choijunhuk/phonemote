@@ -246,7 +246,7 @@ describe('the pose list', () => {
   });
 
   it('looks a pose up by key', () => {
-    expect(poseByKey('aim-up')?.label).toBe('끝을 하늘로');
+    expect(poseByKey('aim-up')?.label).toBe('화면을 바닥으로 눕히기');
     expect(poseByKey('nonsense')).toBeUndefined();
   });
 });
