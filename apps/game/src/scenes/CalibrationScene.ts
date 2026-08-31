@@ -48,7 +48,7 @@ export class CalibrationScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.add
-      .text(width / 2, height * 0.58, '폰을 가로로 들고, 화면 위쪽이 왼쪽을 향하게 잡습니다', {
+      .text(width / 2, height * 0.58, '폰을 세로로 들고, 위쪽 끝이 화면을 향하게 잡습니다', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '20px',
         color: '#98a0b3',

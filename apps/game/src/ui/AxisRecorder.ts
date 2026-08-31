@@ -29,7 +29,7 @@ interface Step {
 const STEPS: readonly Step[] = [
   {
     key: 'rest',
-    prompt: '폰을 가로로 들고 정면을 겨눈 채 가만히',
+    prompt: '폰을 세로로 들고 위쪽 끝이 화면을 향하게, 가만히',
     expectation: 'up ≈ (0, 1, 0), 각속도 ≈ 0',
   },
   { key: 'tilt-right', prompt: '오른쪽으로 90도 기울이기 (오른쪽 변이 아래로)', expectation: 'roll +, up ≈ (-1, 0, 0)' },

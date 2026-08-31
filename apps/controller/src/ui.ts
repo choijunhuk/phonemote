@@ -16,8 +16,8 @@ export interface JoinRequest {
 }
 
 const HOLD_LABELS: ReadonlyArray<{ mode: HoldMode; label: string }> = [
-  { mode: 'landscape', label: '가로로 들기' },
   { mode: 'portrait', label: '세로로 들기' },
+  { mode: 'landscape', label: '가로로 들기' },
   { mode: 'auto', label: '자동' },
 ];
 
@@ -61,7 +61,7 @@ export class ControllerUi {
   private latched = 0;
   private joinHandler: ((request: JoinRequest) => void) | null = null;
   private prefilledRoom = '';
-  private holdMode: HoldMode = 'landscape';
+  private holdMode: HoldMode = 'portrait';
   private onHoldChange: ((mode: HoldMode) => void) | null = null;
 
   constructor(root: HTMLElement) {

@@ -46,11 +46,14 @@ export interface SupportReport {
  * How the player is holding the phone.
  *
  * 'auto' trusts screen.orientation, which is the honest answer but a lie
- * whenever rotation lock is on: Chrome keeps reporting portrait-primary no
- * matter how the phone is physically held, and the normaliser then rotates the
- * axes by 90 degrees too few, swapping pitch and roll. Since the canonical pose
- * is landscape anyway (ARCHITECTURE.md 5.1), stating the hold is both safer and
- * more truthful than trusting a value the OS refuses to update.
+ * whenever rotation lock is on: Chrome keeps reporting portrait-primary however
+ * the phone is actually held. Stating the hold is safer than trusting a value
+ * the OS refuses to update.
+ *
+ * The default is portrait, because that is how people hold phones — a recorded
+ * axis session showed the reference hold reading as portrait tilted thirty
+ * degrees back, while the code was assuming landscape and so working in a frame
+ * rotated ninety degrees from the player's (ARCHITECTURE.md 5.1).
  */
 export type HoldMode = 'auto' | 'landscape' | 'portrait';
 
@@ -75,7 +78,7 @@ function screenOrientationValue(): ScreenOrientationValue {
 }
 
 export class SensorSource {
-  private holdMode: HoldMode = 'landscape';
+  private holdMode: HoldMode = 'portrait';
   private orientation: EulerAngles = ZERO_ANGLES;
   private rotationRate: EulerAngles = ZERO_ANGLES;
   private acceleration: Vector3 = ZERO_VECTOR;

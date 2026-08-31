@@ -48,6 +48,18 @@ function column(field: string, step: Step, side: 'raw' | 'canonical'): number[] 
   return step.samples.map((sample) => sample[side][field] ?? Number.NaN);
 }
 
+/**
+ * The last part of the window, once the phone has stopped moving.
+ *
+ * Averaging the whole window mixes the journey in with the destination — the
+ * mean of a unit vector that swung ninety degrees is not a direction anyone
+ * held, and it shows up as a gravity vector shorter than one.
+ */
+function settled(step: Step): Step {
+  const keep = Math.max(5, Math.floor(step.samples.length * 0.4));
+  return { ...step, samples: step.samples.slice(-keep) };
+}
+
 function fixed(value: number, width = 7): string {
   return (Number.isFinite(value) ? value.toFixed(1) : '—').padStart(width);
 }
@@ -60,7 +72,7 @@ function report(session: AxisSession): void {
 
   for (const step of session.steps) {
     const samples = step.samples.length;
-    console.log(`── ${step.key}  (${samples} samples)`);
+    console.log(`── ${step.key}  (${samples} samples, ${settled(step).samples.length} settled)`);
     console.log(`   요청: ${step.prompt}`);
     console.log(`   예상: ${step.expectation}`);
     if (samples === 0) {
@@ -69,19 +81,21 @@ function report(session: AxisSession): void {
       continue;
     }
 
+    // Held pose from the settled tail; motion figures from the whole window.
+    const held = settled(step);
     const up = {
-      x: mean(column('upX', step, 'canonical')),
-      y: mean(column('upY', step, 'canonical')),
-      z: mean(column('upZ', step, 'canonical')),
+      x: mean(column('upX', held, 'canonical')),
+      y: mean(column('upY', held, 'canonical')),
+      z: mean(column('upZ', held, 'canonical')),
     };
     console.log(
       `   up        x${fixed(up.x)} y${fixed(up.y)} z${fixed(up.z)}` +
         `   (|up| ${Math.hypot(up.x, up.y, up.z).toFixed(2)})`,
     );
     console.log(
-      `   angles    yaw${fixed(mean(column('yaw', step, 'canonical')))}` +
-        ` pitch${fixed(mean(column('pitch', step, 'canonical')))}` +
-        ` roll${fixed(mean(column('roll', step, 'canonical')))}`,
+      `   angles    yaw${fixed(mean(column('yaw', held, 'canonical')))}` +
+        ` pitch${fixed(mean(column('pitch', held, 'canonical')))}` +
+        ` roll${fixed(mean(column('roll', held, 'canonical')))}`,
     );
     console.log(
       `   rate peak yaw${fixed(extreme(column('yawRate', step, 'canonical')))}` +
@@ -94,11 +108,11 @@ function report(session: AxisSession): void {
         ` z${fixed(extreme(column('accelZ', step, 'canonical')))}`,
     );
     console.log(
-      `   raw       a${fixed(mean(column('alpha', step, 'raw')))}` +
-        ` b${fixed(mean(column('beta', step, 'raw')))}` +
-        ` g${fixed(mean(column('gamma', step, 'raw')))}` +
-        `   screen ${mean(column('screenOrientation', step, 'raw')).toFixed(0)}` +
-        `   flags ${mean(column('flags', step, 'raw')).toFixed(0)}`,
+      `   raw       a${fixed(mean(column('alpha', held, 'raw')))}` +
+        ` b${fixed(mean(column('beta', held, 'raw')))}` +
+        ` g${fixed(mean(column('gamma', held, 'raw')))}` +
+        `   screen ${mean(column('screenOrientation', held, 'raw')).toFixed(0)}` +
+        `   flags ${mean(column('flags', held, 'raw')).toFixed(0)}`,
     );
     console.log(
       `   raw rate  a${fixed(extreme(column('rateAlpha', step, 'raw')))}` +
