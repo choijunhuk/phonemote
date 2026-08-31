@@ -198,3 +198,59 @@ describe('a forward swing', () => {
     expect(Math.abs(acceleration.y)).toBeLessThan(1e-9);
   });
 });
+
+describe('the step used for integrating rotation', () => {
+  function raw(rate: number, t: number): SensorFrame {
+    return {
+      playerId: 1,
+      seq: 0,
+      timestamp: t,
+      orientation: { alpha: 0, beta: 0, gamma: 0 },
+      // alpha/beta/gamma are the rates about x/y/z on this device (5.4), and
+      // canonical pitch is +x.
+      rotationRate: { alpha: rate, beta: 0, gamma: 0 },
+      acceleration: { x: 0, y: 0, z: 0 },
+      buttons: 0,
+      screenOrientation: 0,
+      version: SENSOR_FRAME_VERSION,
+      motionSeq: 0,
+      flags: 0,
+    };
+  }
+
+  it('is the instantaneous rate on the first frame, which has no step', () => {
+    const first = normalize(raw(100, 0), null);
+    expect(first.rateStep?.pitch).toBeCloseTo(first.angularVelocity.pitch, 6);
+  });
+
+  it('averages across the step rather than taking the newest sample', () => {
+    // The rectangle rule attributes the whole step to whichever rate arrived
+    // last. Measured against the orientation matrix on a recorded swing, that
+    // triples the per-step error on the fastest axis (ARCHITECTURE.md D39).
+    const previous = normalize(raw(0, 0), null);
+    const next = normalize(raw(200, 16), 0, previous.angularVelocity);
+    expect(next.angularVelocity.pitch).toBeCloseTo(200, 6);
+    expect(next.rateStep?.pitch).toBeCloseTo(100, 6);
+  });
+
+  it('integrates a ramp exactly, where the rectangle rule cannot', () => {
+    // A rate rising linearly from 0 to 600 deg/s over 10 steps of 16 ms turns
+    // the phone by exactly 600 * 0.16 / 2 = 48 degrees.
+    let previousRate = null as ReturnType<typeof normalize>['angularVelocity'] | null;
+    let previousTime: number | null = null;
+    let trapezoid = 0;
+    let rectangle = 0;
+    for (let i = 0; i <= 10; i++) {
+      const frame = normalize(raw(60 * i, i * 16), previousTime, previousRate);
+      if (previousTime !== null) {
+        trapezoid += (frame.rateStep?.pitch ?? 0) * frame.dt;
+        rectangle += frame.angularVelocity.pitch * frame.dt;
+      }
+      previousRate = frame.angularVelocity;
+      previousTime = frame.timestamp;
+    }
+    expect(trapezoid).toBeCloseTo(48, 3);
+    // The rectangle rule over-counts by half a step of the final rate.
+    expect(rectangle - trapezoid).toBeCloseTo(4.8, 3);
+  });
+});

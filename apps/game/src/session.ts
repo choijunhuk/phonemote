@@ -1,4 +1,4 @@
-import type { SensorFrame } from '@phonemote/protocol';
+import { REJOIN_GRACE_MS, type SensorFrame } from '@phonemote/protocol';
 import { GameClient, type PlayerInfo, type RoomInfo } from './net/client.js';
 import { LatencyTracker, StreamQuality, type LatencyStats } from './net/latency.js';
 import { InputMapper, type InputMapperConfig } from './input/InputMapper.js';
@@ -49,12 +49,27 @@ export interface SessionError {
   readonly message: string;
   readonly at: number;
 }
-type PlayersListener = (players: readonly PlayerInfo[]) => void;
+/**
+ * A player the session knows about, and whether their phone is answering.
+ *
+ * A phone that drops out used to be deleted from the roster at once, so every
+ * scene saw an empty list and rebuilt its state from scratch: a two-second wifi
+ * hiccup cost the player their score, their lives and their calibration. A
+ * bowling game is ten frames long and a golf round is nine holes, so that
+ * window is open for minutes at a time (ARCHITECTURE.md D48).
+ */
+export interface SessionPlayer extends PlayerInfo {
+  readonly present: boolean;
+}
+
+type PlayersListener = (players: readonly SessionPlayer[]) => void;
 
 export class GameSession {
   private readonly actionListeners = new Set<ActionListener>();
   private readonly playersListeners = new Set<PlayersListener>();
-  private readonly playerMap = new Map<number, PlayerInfo>();
+  private readonly playerMap = new Map<number, SessionPlayer>();
+  /** Absent players are dropped only once the rejoin window closes. */
+  private readonly evictions = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly latency = new Map<number, LatencyTracker>();
   private readonly quality = new Map<number, StreamQuality>();
   private readonly rawFrames = new Map<number, SensorFrame>();
@@ -81,8 +96,20 @@ export class GameSession {
   /** Newest first. Scenes append; the overlay prints. */
   readonly events: string[] = [];
 
-  get players(): readonly PlayerInfo[] {
+  /** Everyone the session knows about, including phones that just dropped. */
+  get players(): readonly SessionPlayer[] {
     return [...this.playerMap.values()].sort((a, b) => a.id - b.id);
+  }
+
+  /**
+   * Only the phones currently answering.
+   *
+   * A game that needs two players should pause on this while keeping its seats
+   * and scores keyed off `players`, which is the difference between "waiting
+   * for P2" and "P2 never existed".
+   */
+  get presentPlayers(): readonly SessionPlayer[] {
+    return this.players.filter((player) => player.present);
   }
 
   start(): void {
@@ -95,14 +122,7 @@ export class GameSession {
         this.emitPlayers();
       },
       onPlayerJoin: (player) => this.registerPlayer(player),
-      onPlayerLeave: (playerId) => {
-        this.playerMap.delete(playerId);
-        this.latency.delete(playerId);
-        this.quality.delete(playerId);
-        this.rawFrames.delete(playerId);
-        this.mapper.removePlayer(playerId);
-        this.emitPlayers();
-      },
+      onPlayerLeave: (playerId) => this.markAbsent(playerId),
       onFrame: (frame) => this.handleFrame(frame),
       onPong: (playerId, id) => {
         this.latency.get(playerId)?.recordPong(id, performance.now());
@@ -110,8 +130,10 @@ export class GameSession {
       onDisconnect: () => {
         this.connected = false;
         this.room = null;
-        this.playerMap.clear();
-        this.emitPlayers();
+        // Not cleared: the socket dropping says nothing about whether those
+        // phones are coming back, and wiping the roster wipes every game's
+        // scores with it.
+        for (const playerId of this.playerMap.keys()) this.markAbsent(playerId);
       },
     });
 
@@ -127,9 +149,47 @@ export class GameSession {
   }
 
   private registerPlayer(player: PlayerInfo): void {
-    this.playerMap.set(player.id, player);
+    const eviction = this.evictions.get(player.id);
+    if (eviction !== undefined) {
+      clearTimeout(eviction);
+      this.evictions.delete(player.id);
+    }
+    this.playerMap.set(player.id, { ...player, present: true });
     this.latency.set(player.id, new LatencyTracker());
     this.quality.set(player.id, new StreamQuality());
+    this.emitPlayers();
+  }
+
+  /** Mark a phone as gone, and only really drop it once it stays gone. */
+  private markAbsent(playerId: number): void {
+    const player = this.playerMap.get(playerId);
+    if (!player || !player.present) return;
+
+    this.playerMap.set(playerId, { ...player, present: false });
+    this.log(`연결 끊김 P${playerId} (${REJOIN_GRACE_MS / 1000}초 대기)`);
+    this.evictions.set(
+      playerId,
+      setTimeout(() => this.evict(playerId), REJOIN_GRACE_MS),
+    );
+    this.emitPlayers();
+  }
+
+  private evict(playerId: number): void {
+    this.evictions.delete(playerId);
+    if (this.playerMap.get(playerId)?.present === true) return;
+
+    this.playerMap.delete(playerId);
+    this.latency.delete(playerId);
+    this.quality.delete(playerId);
+    this.rawFrames.delete(playerId);
+    this.swingCounts.delete(playerId);
+    this.lastSwings.delete(playerId);
+    this.lastTilt.delete(playerId);
+    this.sensorChangedAt.delete(playerId);
+    this.stalledSince.delete(playerId);
+    this.accelHistory.delete(playerId);
+    this.mapper.removePlayer(playerId);
+    this.log(`퇴장 P${playerId}`);
     this.emitPlayers();
   }
 

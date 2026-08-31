@@ -109,9 +109,18 @@ describe('modes', () => {
     const actions: GameAction[] = [];
     // These frames are landscape, where canonical yaw is -rotationRate.alpha
     // (ARCHITECTURE.md 5.6).
+    // Acceleration comes along for the ride because a rotation that moves the
+    // phone nowhere is a turn, not a swing, and the detector vetoes it
+    // (ARCHITECTURE.md D40). Real swings peaked at 32-60 m/s^2.
     const sweep = (t: number, rate: number): void => {
       actions.push(
-        ...mapper.update(raw({ timestamp: t, rotationRate: { alpha: -rate, beta: 0, gamma: 0 } })),
+        ...mapper.update(
+          raw({
+            timestamp: t,
+            rotationRate: { alpha: -rate, beta: 0, gamma: 0 },
+            acceleration: { x: 0, y: 0, z: (rate / 900) * 40 },
+          }),
+        ),
       );
     };
     // Ramp up, peak, fall away. The event lands on the frame where the rate has

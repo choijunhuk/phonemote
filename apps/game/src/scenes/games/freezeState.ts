@@ -52,6 +52,8 @@ export const LOCK_POINTS = [3, 2, 1] as const;
 
 export interface FreezePlayer {
   readonly id: number;
+  /** False while this phone is not answering. Kept, not deleted (D48). */
+  present: boolean;
   score: number;
   hearts: number;
   out: boolean;
@@ -127,11 +129,15 @@ export function findPlayer(state: FreezeState, id: number): FreezePlayer | undef
  * rest of the room its grips, scores and lives, which is exactly what happened
  * when the scene rebuilt every card from scratch on a player-list change.
  */
-export function syncPlayers(state: FreezeState, ids: readonly number[]): void {
-  state.players = ids.map(
-    (id) =>
-      findPlayer(state, id) ?? {
+export function syncPlayers(
+  state: FreezeState,
+  roster: ReadonlyArray<{ readonly id: number; readonly present: boolean }>,
+): void {
+  state.players = roster.map(
+    ({ id, present }) =>
+      withPresence(findPlayer(state, id), present) ?? {
         id,
+        present,
         score: 0,
         hearts: state.config.hearts,
         out: false,
@@ -146,6 +152,12 @@ export function syncPlayers(state: FreezeState, ids: readonly number[]): void {
         lastPoseAt: 0,
       },
   );
+}
+
+function withPresence(player: FreezePlayer | undefined, present: boolean): FreezePlayer | undefined {
+  if (!player) return undefined;
+  player.present = present;
+  return player;
 }
 
 /** A reading from a phone: kept for calibration, and judged if calibrated. */
@@ -213,16 +225,22 @@ export function calibrate(state: FreezeState, id: number, refusable = false): bo
 }
 
 export function everyoneReady(state: FreezeState): boolean {
-  return state.players.length > 0 && state.players.every((player) => player.reference !== null);
+  const present = state.players.filter((player) => player.present);
+  return present.length > 0 && present.every((player) => player.reference !== null);
 }
 
 export function alivePlayers(state: FreezeState): FreezePlayer[] {
   return state.players.filter((player) => !player.out);
 }
 
+/** Alive and answering: who a round is actually waiting on. */
+export function activePlayers(state: FreezeState): FreezePlayer[] {
+  return state.players.filter((player) => !player.out && player.present);
+}
+
 function everyoneLocked(state: FreezeState): boolean {
-  const alive = alivePlayers(state);
-  return alive.length > 0 && alive.every((player) => player.locked);
+  const active = activePlayers(state);
+  return active.length > 0 && active.every((player) => player.locked);
 }
 
 export function startRound(state: FreezeState, rng: () => number = Math.random): FreezeEvent[] {
@@ -312,7 +330,7 @@ export function stepFreeze(
 function tickHolds(state: FreezeState, dt: number, nowMs: number): FreezeEvent[] {
   const events: FreezeEvent[] = [];
   for (const player of state.players) {
-    if (player.out || player.locked) continue;
+    if (player.out || player.locked || !player.present) continue;
 
     const fresh = nowMs - player.lastPoseAt < state.config.poseFreshMs;
     if (!fresh || !player.held) {
@@ -339,6 +357,10 @@ function judge(state: FreezeState): FreezeEvent[] {
   const events: FreezeEvent[] = [];
   for (const player of state.players) {
     if (player.out || player.locked) continue;
+    // A phone that dropped out did not miss the pose; it was not asked.
+    // Taking a life for a wifi hiccup is how a two-second outage became a
+    // knocked-out player (ARCHITECTURE.md D48).
+    if (!player.present) continue;
     // Missing a pose costs a life, not the game.
     player.hearts--;
     player.out = player.hearts <= 0;

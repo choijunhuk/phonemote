@@ -101,3 +101,65 @@ describe('fusion', () => {
     expect(afterGap.pitch).toBe(33);
   });
 });
+
+// TEMP MEASUREMENT BLOCK
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import { decodeSensor, parseTrace } from '@phonemote/protocol';
+import { normalize } from '../SensorNormalizer.js';
+
+const here2 = dirname(fileURLToPath(import.meta.url));
+const CORPUS2 = resolve(here2, '../../../../../traces/corpus');
+
+function canonicalFrames(name: string): CanonicalSensorFrame[] {
+  const trace = parseTrace(readFileSync(join(CORPUS2, name), 'utf8'));
+  const out: CanonicalSensorFrame[] = [];
+  let previous: number | null = null;
+  for (const encoded of trace.frames) {
+    const raw = decodeSensor(encoded);
+    out.push(normalize(raw, previous));
+    previous = raw.timestamp;
+  }
+  return out;
+}
+
+describe('TEMP measurements', () => {
+  it('step response at several rates', () => {
+    for (const dt of [1 / 120, 1 / 60, 1 / 20, 1 / 10]) {
+      const filter = new ComplementaryFilter();
+      filter.update(frame({ dt: 0, orientation: { yaw: 0, pitch: 0, roll: 0 } }));
+      let n = 0;
+      for (; n < 5000; n++) {
+        const r = filter.update(frame({ dt, orientation: { yaw: 0, pitch: 30, roll: 0 } }));
+        if (r.pitch >= 27) break;
+      }
+      console.log(`dt=${dt.toFixed(5)} frames=${n + 1} time=${((n + 1) * dt * 1000).toFixed(1)}ms`);
+    }
+  });
+
+  it('tail detail', () => {
+    for (const name of ['real-swing.pmtrace', 'phone-on-table.pmtrace']) {
+      const frames = canonicalFrames(name);
+      const filter = new ComplementaryFilter({ trustRecoverySeconds: 3 });
+      let previous: { yaw: number; pitch: number; roll: number } | null = null;
+      const rows: string[] = [];
+      for (const f of frames) {
+        const before = previous;
+        const after = filter.update(f);
+        if (before && f.dt > 0 && f.dt <= 0.25) {
+          const gyroPitch = before.pitch + f.angularVelocity.pitch * f.dt;
+          const gyroRoll = before.roll + f.angularVelocity.roll * f.dt;
+          const ip = Math.abs(after.pitch - gyroPitch);
+          const ir = Math.abs(after.roll - gyroRoll);
+          const w = Math.hypot(f.angularVelocity.yaw, f.angularVelocity.pitch, f.angularVelocity.roll);
+          const dp = after.pitch - f.orientation.pitch;
+          const dr = after.roll - f.orientation.roll;
+          rows.push(`  w=${w.toFixed(0).padStart(5)} err=${Math.hypot(dp, dr).toFixed(1).padStart(6)} inj=${Math.max(ip, ir).toFixed(2).padStart(6)}`);
+        }
+        previous = after;
+      }
+      console.log(name + String.fromCharCode(10) + rows.slice(-16).join(String.fromCharCode(10)));
+    }
+  });
+});

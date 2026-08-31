@@ -24,6 +24,13 @@ function sweep(pointer: PointerMode, yaw: number, pitch: number): void {
   }
 }
 
+/** Feeds a steady yaw rate at whatever interval the phone happens to deliver. */
+function hold(pointer: PointerMode, yaw: number, dt: number, frames: number): void {
+  for (let i = 0; i < frames; i++) {
+    pointer.update(frame({ dt, angularVelocity: { yaw, pitch: 0, roll: 0 } }));
+  }
+}
+
 describe('pointer integration', () => {
   it('crosses half the screen when swept 30 deg to the right in one second', () => {
     const pointer = new PointerMode();
@@ -84,6 +91,72 @@ describe('pointer integration', () => {
   it('does not move on a frame with no elapsed time', () => {
     const pointer = new PointerMode();
     pointer.update(frame({ dt: 0, angularVelocity: { yaw: 500, pitch: 500, roll: 0 } }));
+    expect(pointer.position).toEqual({ x: 0.5, y: 0.5 });
+  });
+
+  it('travels the same distance on a real phone stream as on a 60 Hz one', () => {
+    // The recorded phone delivers a frame every 51-55 ms, not every 16.7 ms.
+    // Both of these are 1.1 seconds of the same 20 deg/s turn, so the hand has
+    // gone the same distance and the cursor has to agree.
+    const fast = new PointerMode();
+    hold(fast, 20, 1 / 60, 66);
+    const slow = new PointerMode();
+    hold(slow, 20, 0.055, 20);
+
+    expect(slow.position.x).toBeCloseTo(fast.position.x, 6);
+    // 22 degrees of a 60 degree sweep, from the centre.
+    expect(slow.position.x).toBeCloseTo(0.5 + 22 / 60, 6);
+  });
+
+  it('does not lurch when the phone goes quiet for two seconds', () => {
+    const pointer = new PointerMode();
+    hold(pointer, 0, 0.05, 10);
+    const before = pointer.position;
+
+    // A backgrounded tab hands the whole gap to the next frame it sends. 14
+    // deg/s is the fastest a hand trying to hold still was measured turning,
+    // and two seconds of that integrated whole throws the cursor 0.47 of the
+    // screen away from where the player left it.
+    pointer.update(frame({ dt: 2, angularVelocity: { yaw: 14, pitch: 14, roll: 0 } }));
+
+    const after = pointer.position;
+    expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeLessThan(0.05);
+  });
+});
+
+describe('pointer deadzone hysteresis', () => {
+  it('keeps following a hand that eases off without stopping', () => {
+    const pointer = new PointerMode();
+    hold(pointer, 3, 0.05, 20);
+    const beforeEasingOff = pointer.position.x;
+
+    // Still turning, just slower than the deadzone. Dropping the cursor here
+    // is what makes a slow, careful aim feel like it keeps catching.
+    hold(pointer, 1.6, 0.05, 20);
+
+    expect(pointer.position.x).toBeGreaterThan(beforeEasingOff);
+  });
+
+  it('stops once the hand really has settled', () => {
+    const pointer = new PointerMode();
+    hold(pointer, 3, 0.05, 20);
+    hold(pointer, 1, 0.05, 40);
+    const settled = pointer.position.x;
+
+    hold(pointer, 1, 0.05, 20);
+
+    expect(pointer.position.x).toBe(settled);
+  });
+
+  it('needs the full deadzone again after a re-centre', () => {
+    const pointer = new PointerMode();
+    hold(pointer, 3, 0.05, 20);
+    pointer.reset();
+
+    // 1.6 deg/s would hold an already-open gate open, but it has never been
+    // enough to open one.
+    hold(pointer, 1.6, 0.05, 20);
+
     expect(pointer.position).toEqual({ x: 0.5, y: 0.5 });
   });
 });

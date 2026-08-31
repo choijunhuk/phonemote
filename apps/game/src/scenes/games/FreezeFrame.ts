@@ -229,7 +229,7 @@ export class FreezeFrame extends Phaser.Scene {
     // game, which is what rebuilding the roster from scratch used to do.
     syncPlayers(
       this.state,
-      players.map((player) => player.id),
+      players.map((player) => ({ id: player.id, present: player.present })),
     );
 
     players.forEach((player, index) => {

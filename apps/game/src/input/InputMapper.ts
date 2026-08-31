@@ -4,7 +4,7 @@ import { normalize } from './SensorNormalizer.js';
 import { PointerMode, type PointerOptions } from './PointerMode.js';
 import { SwingDetector } from './SwingDetector.js';
 import { TiltMode, type TiltOptions } from './TiltMode.js';
-import type { CanonicalSensorFrame, GameAction } from './types.js';
+import type { CanonicalAngles, CanonicalSensorFrame, GameAction } from './types.js';
 
 /**
  * Turns canonical frames into the GameAction stream scenes consume
@@ -39,6 +39,8 @@ const BUTTON_ENTRIES = Object.entries(BUTTON) as ReadonlyArray<[ButtonName, numb
 
 interface PlayerState {
   lastTimestamp: number | null;
+  /** For the trapezoid step (ARCHITECTURE.md D39). */
+  lastRate: CanonicalAngles | null;
   lastMotionSeq: number | null;
   stalled: boolean;
   buttons: number;
@@ -76,6 +78,7 @@ export class InputMapper {
 
     const created: PlayerState = {
       lastTimestamp: null,
+      lastRate: null,
       lastMotionSeq: null,
       stalled: false,
       buttons: 0,
@@ -169,8 +172,9 @@ export class InputMapper {
     state.lastMotionSeq = frame.motionSeq;
     if (stale) return actions;
 
-    const canonical = normalize(frame, state.lastTimestamp);
+    const canonical = normalize(frame, state.lastTimestamp, state.lastRate);
     state.lastTimestamp = frame.timestamp;
+    state.lastRate = canonical.angularVelocity;
     state.lastCanonical = canonical;
 
     // Modes read the fused pose; the raw canonical one is kept for the overlay.

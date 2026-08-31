@@ -132,15 +132,18 @@ export class Tennis extends Phaser.Scene {
     // nobody played.
     const dt = Math.min(delta / 1000, 1 / 30);
 
-    if (session.players.length !== this.lastPlayerCount) {
-      session.log(`플레이어 ${this.lastPlayerCount} → ${session.players.length}`);
-      this.lastPlayerCount = session.players.length;
+    if (session.presentPlayers.length !== this.lastPlayerCount) {
+      session.log(`플레이어 ${this.lastPlayerCount} → ${session.presentPlayers.length}`);
+      this.lastPlayerCount = session.presentPlayers.length;
     }
 
     // A phone that drops out for a moment used to restart the scene, wiping a
     // 4-3 game because of one bad second of wifi. Pause instead: the score is
     // still there when they come back.
-    this.waiting = session.players.length < this.state.config.players;
+    // Present, not known: a phone inside its rejoin window is still on the
+    // roster with its score, and the game should wait rather than play on
+    // without it (ARCHITECTURE.md D48).
+    this.waiting = session.presentPlayers.length < this.state.config.players;
     if (this.waiting) {
       this.render();
       return;

@@ -44,7 +44,7 @@ function freeze(players = 1, config = {}): FreezeState {
   const state = createFreeze({ autoCalibrateSeconds: 999, ...config });
   syncPlayers(
     state,
-    Array.from({ length: players }, (_, index) => index + 1),
+    Array.from({ length: players }, (_, index) => ({ id: index + 1, present: true })),
   );
   return state;
 }
@@ -107,7 +107,7 @@ describe('setting a grip', () => {
   it('never leaves anyone stuck on the setup screen', () => {
     // Same flat phone, but now the player never presses A.
     const state = createFreeze();
-    syncPlayers(state, [1]);
+    syncPlayers(state, [{ id: 1, present: true }]);
     for (let i = 0; i < 30; i++) readPose(state, 1, { x: 0, y: 0, z: 1 }, i * 16);
     for (let i = 0; i < 6 * 60; i++) stepFreeze(state, FRAME, 500 + i * 16, () => 0.5);
 
@@ -241,7 +241,7 @@ describe('the room changing while it plays', () => {
     const before = state.players[0]?.score ?? 0;
     expect(before).toBeGreaterThan(0);
 
-    syncPlayers(state, [1, 2]);
+    syncPlayers(state, [{ id: 1, present: true }, { id: 2, present: true }]);
     expect(state.players[0]?.score).toBe(before);
     expect(state.players[0]?.reference).not.toBeNull();
     expect(state.players[1]?.reference).toBeNull();
@@ -256,5 +256,55 @@ describe('what the screen is told', () => {
     hold(state, [1], 0.25);
     expect(holdProgress(state)).toBeGreaterThan(0);
     expect(holdProgress(state)).toBeLessThan(1);
+  });
+});
+
+describe('a phone that drops out mid-round', () => {
+  it('does not take a life for a round it was never asked to play', () => {
+    // A two-second wifi hiccup used to cost the player a life every round it
+    // spanned, and three of them knocked them out of a game they were winning.
+    const state = freeze(2);
+    begin(state);
+    syncPlayers(state, [
+      { id: 1, present: true },
+      { id: 2, present: false },
+    ]);
+    hold(state, [1], 5);
+
+    expect(state.players[0]?.hearts).toBe(3);
+    expect(state.players[1]?.hearts).toBe(3);
+    expect(state.players[1]?.out).toBe(false);
+  });
+
+  it('keeps their score and their grip for when they come back', () => {
+    const state = freeze(2);
+    begin(state);
+    hold(state, [1, 2], 1.2);
+    const score = state.players[1]?.score ?? 0;
+    expect(score).toBeGreaterThan(0);
+
+    syncPlayers(state, [
+      { id: 1, present: true },
+      { id: 2, present: false },
+    ]);
+    syncPlayers(state, [
+      { id: 1, present: true },
+      { id: 2, present: true },
+    ]);
+    expect(state.players[1]?.score).toBe(score);
+    expect(state.players[1]?.reference).not.toBeNull();
+  });
+
+  it('does not wait for an absent player to end the round', () => {
+    const state = freeze(2);
+    begin(state);
+    syncPlayers(state, [
+      { id: 1, present: true },
+      { id: 2, present: false },
+    ]);
+    // P1 locks; the round should finish rather than run its full length
+    // waiting on a phone that is not there.
+    const events = hold(state, [1], 1.4);
+    expect(events.some((event) => event.kind === 'reveal')).toBe(true);
   });
 });
