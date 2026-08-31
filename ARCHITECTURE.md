@@ -570,14 +570,33 @@ type Feedback = { type: 'vibrate'; playerId: number; pattern: number[] };
 | `TiltMode` | canonical pitch/roll | `{x, y}` −1~1 | 캘리브레이션 오프셋 |
 | `ComplementaryFilter` | canonical 자세 + 각속도 | 융합 자세 | 이전 pitch/roll/yaw |
 | `InputMapper` | `SensorFrame` | `GameAction[]` | 플레이어별 모드 + 이전 buttons |
+| `grip` | 정지 샘플들, `up` | `Grip`, 부호 있는 roll/pitch/기울기벡터 | 없음(순수 함수) |
+| `Stillness` | `|ω|`, `dt` | `{rate, still, steadyMs}` | EMA + 히스테리시스 |
+| `StrokeDetector` | `CanonicalSensorFrame` | stroke 이벤트 (40~300 deg/s 대역) | 진행 중 구간 |
+| `GyroBias` | 각속도, `dt` | 바이어스 보정된 각속도 | 0.5초 링버퍼 + 추정치 |
+
+**Phase 6에서 추가된 네 모듈의 존재 이유** — 여섯 개 신규 게임 중 다섯이 "자기 그립 대비 부호 있는
+기울기"를 필요로 하는데 그걸 만드는 코드가 없었다. `pose.ts` 는 부호 없는 각도만 주고(`poseOffByDeg`),
+`TiltMode` 는 `InputMapper` 벽 뒤에 있다. 안 만들면 `freezeState.calibrate()` 의 로직이 여섯 번 복사된다.
 
 ```ts
 type GameAction =
   | { kind: 'pointer_move'; playerId: number; x: number; y: number }
-  | { kind: 'swing'; playerId: number; strength: number;
+  | { kind: 'swing'; playerId: number; strength: number; power: number;
       direction: { x: number; y: number; z: number };
-      direction8: 'N'|'NE'|'E'|'SE'|'S'|'SW'|'W'|'NW'; timestamp: number }
+      direction8: 'N'|'NE'|'E'|'SE'|'S'|'SW'|'W'|'NW';
+      phase: 'strike' | 'single'; peakRate: number;
+      // 축별 적분 원본. tipTravel 이 yaw+roll 로 뭉개기 전 값이고,
+      // 볼링의 훅과 골프의 페이스 각이 정확히 이 비를 필요로 한다.
+      rotation: CanonicalAngles;
+      onsetAt: number; peakAt: number; durationMs: number; timestamp: number }
+  | { kind: 'stroke'; playerId: number; angleDeg: number; axis: CanonicalVector;
+      durationMs: number; peakRate: number; reversedFromPrevious: boolean; timestamp: number }
+  | { kind: 'release'; playerId: number; at: number; rate: number; rotation: CanonicalAngles }
+  | { kind: 'stillness'; playerId: number; rate: number; still: boolean;
+      steadyMs: number; stalled: boolean }
   | { kind: 'tilt'; playerId: number; x: number; y: number }
+  | { kind: 'pose'; playerId: number; up: CanonicalVector }
   | { kind: 'button_down'; playerId: number; button: ButtonName }
   | { kind: 'button_up'; playerId: number; button: ButtonName };
 ```
@@ -625,13 +644,29 @@ type GameAction =
 - `LobbyScene`: 룸코드 표시, QR(Phase 2), 플레이어 슬롯 4개.
 - `CalibrationScene`(Phase 2): "폰을 화면 중앙으로 향하고 A" → 오프셋 저장.
 - `games/PointerTest`(Phase 1): 기울기로 원 이동, A로 색 변경.
+- `games/BaseGameScene`(Phase 6): 모든 게임 씬의 부모. `init(data)` 에서 run-scoped 필드 초기화,
+  `cleanups` 일괄 해제, HOME·ESC 통일, `waitingFor()` 오버레이, `returnToLobbyAfter()`,
+  `debugState()`. 존재 이유는 취향이 아니라 실제 버그다 — Phaser는 재시작 때 같은 인스턴스를
+  재사용하므로 클래스 필드가 살아남고, 그래서 `LobbyScene.qrShown` 이 리셋되지 않아 **첫 게임
+  이후로는 로비에 QR이 다시 나오지 않았고**, `Tennis.overSince` 도 리셋되지 않아 두 번째 매치의
+  승자 화면이 한 프레임만 보였다. 한 곳에서 막는다.
 - `games/Tennis`(Phase 3): 상태 머신 `serve → rally → point → gameover`.
 - `games/FreezeFrame`(Phase 3): 상태 머신 `ready → holding → reveal → over`.
+- `games/{Bowling,Golf,Archery,Ski,StatueRace,TogetherTable}`(Phase 6): 11.1 참조.
+- `games/seats.ts`, `games/turnOrder.ts`(Phase 6): 좌석과 턴. 둘 다 순수 모듈.
+- `lobbyLayout.ts`(Phase 6): 타일 격자. Phaser를 import하지 않아 Phaser 없이 테스트된다.
 - **규칙과 그리기의 분리**: 두 게임 모두 규칙은 Phaser를 import 하지 않는 순수 모듈
   (`games/tennisState.ts`, `games/freezeState.ts`)에 있고, 씬은 그것을 그리고
   소리·진동만 붙인다. 규칙이 씬 안에 있으면 자동 검증할 방법이 사실상 없다 (8장).
   `freezeState`는 소리·진동이 필요한 순간을 `FreezeEvent[]` 로 반환한다.
 - `ui/DebugOverlay`: 선택 플레이어의 raw ↔ canonical 값 나란히 표시, RTT median/p95, Hz, 유실률.
+
+**모드는 1급 개념이다** (Phase 6). `games.ts` 의 `GameDefinition.modes: readonly GameMode[]`,
+`GameMode = { key, title, minPlayers, maxPlayers, input }`. 로비가 `scene.start(key, { mode })` 로
+넘기고 씬은 `init(data)` 에서 읽는다. 그전에는 `Tennis.create()` 가 `players.length >= 2 ? 2 : 1` 로
+접속 폰 수에서 모드를 **추측**했다 — 폰이 두 대면 연습을 고를 방법이 없고 한 대면 대전을 고를 방법이
+없었다. 인원이 안 되는 모드는 숨기지 않고 흐리게 + 이유를 쓴다("4명 필요, 지금 2명"): 조용히
+사라지는 메뉴는 고장난 것으로 읽힌다.
 
 ---
 
@@ -728,10 +763,49 @@ TypeScript는 **strict + `noUncheckedIndexedAccess`**, `any` 금지(ESLint 에�
 | 2 | 입력 레이어 완성 + 페어링 UX | PointerMode, SwingDetector, QR, 캘리브레이션, 리모컨 UI, 진동 | ✅ |
 | 3 | 첫 게임: 테니스 | Tennis, P4 lint 강제 | ✅ |
 | 4 | 정밀도와 안정성 | 상보 필터, 재접속 identity 복구, 하트비트 | ✅ |
-| 5 | (선택) 확장 | WebRTC DataChannel, 두 번째 게임, 포인터 메뉴 | 미착수 |
+| 5 | 두 번째 게임 + 관측 도구 | Freeze Frame, 트레이스 녹화/재생, 가짜 컨트롤러, 브라우저 종주 | ✅ |
+| 6 | **로스터 확장** | 모드 개념, 로비 격자, 좌석·턴, 입력 프리미티브 4종, 신규 게임 6종, 전 게임 연습 모드 | 진행 중 |
+| 7 | (선택) 정밀도 2차 | 쿼터니언 자세, 중력 와이어 전송(frame v3), 축별 노이즈 캘리브레이션 | 미착수 |
 
 Phase 1의 Manual 검증에서 5.6 매핑표가 틀린 것으로 드러나면,
 `docs: confirm android sensor axis mapping` 커밋으로 이 문서를 먼저 고친 뒤 코드를 고친다.
+
+### 11.1 게임 로스터 (Phase 6)
+
+각 게임은 **읽는 신호**로 정의된다. 신호가 겹치는 게임은 같은 실패 모드를 공유하므로, 로스터는
+"무엇을 재는가"가 서로 다르도록 짰다.
+
+| key | 제목 | 인원 | 읽는 신호 | 왜 이 플랫폼에서 견고한가 |
+|---|---|---|---|---|
+| `bowling` | Bowling | 1~4 | 정지 중 `up`(스탠스) + TRIGGER 릴리스 시점의 `|ω|`(속도) + 버스트 축별 적분비(훅) | 릴리스가 추정이 아니라 버튼 엣지다. 절대 방위 0 |
+| `golf` | Golf | 1~4 | `up`(조준·어드레스) + swing `peakRate`(파워) + `rotation.roll/pitch`(페이스) + stroke 적분각(퍼팅) | 세게/페이스 두 값이 같은 버스트에서 나온다. 퍼팅은 임계가 아니라 반전으로 자른다 |
+| `archery` | Archery | 1~4 | `up`(앙각) + 드로 중에만 적분하는 yaw + 릴리스 직전 `|ω|`(흔들림) + TRIGGER | 스윙 검출을 한 줄도 쓰지 않는다. 미검출이라는 실패 모드가 구조적으로 없다 |
+| `ski` | Alpine Ski | 1~4 | `up` 하나, 연속 | 저주파 신호라 표본율이 낮아도 나빠지지 않는다. 검출기 0개 |
+| `statue-race` | Statue Race | 1~4 | `|ω|` 하나 (전진 = 경로길이 적분, 판정 = 이동평균) | 정지 0.2 / 손 3.3 / 걷기 54 / 스윙 300+ 로 실측 분리가 압도적 |
+| `together-table` | Together Table | 1~4 | 전원의 `up` 평균 | 유일한 협동. 한 명이 끊겨도 평균이 남는다 |
+| `tennis` | Tennis | 1~2 | swing `peakRate` + 방향 | 기존 |
+| `freeze-frame` | Freeze Frame | 1~4 | `up` + 유지 시간 | 기존 |
+| `pointer-test` | Pointer Test | 1~4 | 전부 (도구) | 기존 |
+
+**모든 게임은 `practice` 모드를 선언한다.** 예외 없음 — 조건부 규칙은 지켜지지 않는다.
+`apps/game/src/__tests__/games.test.ts` 가 CI에서 이것을 강제한다. 연습 모드의 목적은
+"점수 없이 하기"가 아니라 **보이지 않는 입력을 숫자로 보여주는 것**이다: 볼링은 궤적과 훅 비율,
+골프는 백스트로크 적분각, 양궁은 홀드 구간의 `|ω|` 그래프, 스키는 중립 마커.
+사람이 자기 동작을 못 보면 무엇을 고쳐야 할지 알 수 없고, 그때 "인식이 안 된다"고 말하게 된다.
+
+### 11.2 실기기 트레이스의 한계 (정직하게)
+
+`traces/corpus/real-*.pmtrace` 는 **폰의 스트림이 아니다.** `AxisRecorder` 가 50ms마다 마지막
+수신 프레임을 PC 시계로 찍은 20Hz 폴링이고(`SAMPLE_EVERY_MS = 50`, `t: performance.now()`),
+`traceFromLog.ts` 가 `motionSeq: index` 로 덮어쓴다. 따라서 이 파일들로는:
+
+- 폰의 진짜 표본율을 알 수 없다 (`SENSOR_MAX_SEND_HZ = 100`, `devicemotion` 구동이라는 설계값만 있다)
+- `motionSeq` 정지 판정을 검증할 수 없다
+- 스윙이 3샘플로만 보인다 (합성은 7샘플)
+
+**따라서 시간에 의존하는 모든 상수는 15Hz~100Hz에서 동일하게 동작해야 한다.** 60Hz를 가정한
+상수는 실기기에서 조용히 다른 값이 된다 — 상보 필터의 회복 시간이 문서의 367ms가 아니라 1146ms인
+것이 그 예다(D37). 폰 시계로 기록한 네이티브 레이트 트레이스를 얻기 전까지 이 제약은 유효하다.
 
 ---
 
@@ -790,6 +864,21 @@ Phase 1의 Manual 검증에서 5.6 매핑표가 틀린 것으로 드러나면,
 | D33 | 라운드 점수는 고정 순서(3·2·1), 목숨 3개 | 아무도 탈락하지 않으면 끝나는 조건이 없어 승자 화면이 도달 불가능한 코드였다 |
 | D34 | 자세 후보를 **방 전체 그립**의 교집합에서 선택, 비면 다수결로 완화 | 중력은 자기 축 회전을 못 본다. 한 사람이 눕혀 들면 그 사람만 가만히 있어도 성공한다. 다만 교집합이 1개까지 줄면 같은 자세만 무한 반복되므로 완화가 필요하다 |
 | D35 | 기준 그립을 창 평균이 아니라 **최신 샘플 기준**으로 정렬 후 평균 | 버튼으로 가는 손이 평균을 20° 끌고 가고, 그 평균 기준의 이상치 제거가 정작 좋은 샘플을 버린다 |
+| D36 | 포인터 dt 클램프 50ms → `SENSOR_STALL_MS`(150ms) | 실기기 프레임 간격 중앙값이 51~55ms라 **39/39 스텝이 전부 클램프**되어 경과시간의 90.6%만 적분됐다. 커서가 손보다 조용히 느렸고, 지터에 따라 그 정도가 변했다. 합성 60Hz 트레이스는 0/599라 기존 테스트가 이걸 못 봤다 |
+| D37 | 상보 필터 보정을 샘플당 → **시간 기반** `1-exp(-dt/τ)` | 고정 0.1 게인은 시정수가 표본율에 딸려간다. 30° 스텝의 90% 도달이 60Hz 367ms, 19.2Hz 1146ms, 10Hz 2200ms — 문서의 "0.2초 이하 회복"은 60Hz에서만 참이었다. τ는 60Hz에서 기존과 비트 동일하게 유도한다 |
+| D38 | 상보 필터 보정을 프레임의 **동적 정도로 게이팅** | 중력 자세와 자이로 전파 자세의 차가 정지 시 0.19°인데 스윙 중 p95 29.8°, 최대 43.2°다. 고정 게인이면 접촉 순간 한 프레임에 4.6°를 주입한다 — 기준이 가장 못 믿을 순간에 가장 세게 걸린다 |
+| D39 | 각속도 적분을 사각형 → **사다리꼴** | orientation 행렬 기준 ground truth 대비 스텝별 rate RMSE가 x 115.0→46.8, y 22.6→12.0, z 57.7→19.3 deg/s. 2초 개방루프 자세 오차 평균 12.04°→8.70°, 중앙 4.24°→2.06°. 정지 트레이스에서도 개선되므로 스윙 전용 아티팩트가 아니다 |
+| D40 | 스윙 구간 분할에 **슈미트 트리거 + 룩백 + 가속도 veto** (D24 개정) | 분할은 여전히 `|ω|` 만 쓰지만, 단일 임계 300은 실기기 비-스윙 제스처에서 **12회 오발화**했다(눕히기 4, 세우기 3, 기울이기 3, 회전 2 — 진짜 스윙 발화는 9회). HI=400/LO=110 + 룩백 + 버스트 중 `max|a| ≥ 12 m/s²` 요구로 오발화 9→0(잔존 3회는 828 deg/s·43 m/s²의 진짜 휘두름), 검출률은 유지, 적분 이동거리 36°→96°. `|a|` 는 **분할이 아니라 발화 후 거부권**으로만 쓴다 — D24의 원래 논거(구심 가속도는 진행 방향이 아니다)는 그대로 유효하다 |
+| D41 | `SwingEvent` 에 `rotation`/`onsetAt`/`peakAt`/`durationMs` 추가 (D25·D15 보강) | `tipTravel` 이 `{x: yaw+roll}` 로 yaw와 roll의 구분을 파괴하는데, 볼링의 훅과 골프의 페이스 각이 정확히 그 비를 필요로 한다. 값은 이미 계산되어 있었다. 그리고 발화 시각과 피크 시각은 다르다 — 검출 지연이 60Hz 합성 +33ms, 실기기 +50~102ms이고 지금까지 어떤 씬도 보정할 수 없었다 |
+| D42 | 파워 스케일을 게임 상수 → **입력 계층의 플레이어별 값** (D28 개정) | 같은 사람의 "세게" 여섯 번이 297~1211 deg/s(4배 폭)이고 `SWING_OMEGA_MAX=900` 이 그중 셋을 1.00으로 포화시킨다. `tennisState` 안의 SOFT/HARD 상수를 스포츠 게임 다섯 개가 각자 재발견하게 둘 수 없다 |
+| D43 | `TiltMode` 를 오일러각 → **`up` 벡터 기반** (D21 강화) | 오일러 roll의 증폭이 1/cos(pitch)다: −70°에서 2.75배, −85°에서 11.4배, −88°에서 28.6배. 0.1° 양자화 한 스텝이 35° 범위의 8%를 움직인다. 골프 어드레스·볼링 딜리버리가 정확히 그 자세다 |
+| D44 | 자이로 **바이어스 추정(ZUPT)** 을 정지 게이트에 물려 추가 | 실측 커서 드리프트가 0.0166 화면폭/초 — 30초에 반 화면이고 기존 테스트 한계의 60%를 이미 쓰고 있다. 함의 바이어스는 축당 0.07~0.51 deg/s |
+| D45 | 자세 매칭과 데드존에 **히스테리시스** (D32 보강) | 둘 다 맨 임계 비교라 경계에 선 손이 0.1° 양자화 위에서 통과/실패를 왕복한다. dwell이 세는 술어 자체를 안정화한다 |
+| D46 | 좌석을 배열 위치 → **매치 시작에 고정한 id 목록** | `session.players.findIndex()` 는 id 정렬 배열이고 릴레이는 최저 공번호를 재사용한다. 랠리 중 합류한 낮은 id가 1번 좌석을 가져가고 기존 1번이 2번으로 밀리며 기존 2번이 관전자가 됐다 |
+| D47 | 턴을 게임별 사설 구현 → **공용 `turnOrder.ts`** | `tennisState` 가 `server: Side` + `'not-your-turn'` + 자동 서브로 이미 사설 구현했다. 볼링 10프레임과 골프 9홀이 각자 다시 만들면 답이 셋이 된다. 끊긴 폰은 차례를 **건너뛰되 좌석과 점수는 유지**한다 |
+| D48 | 재접속을 즉시 제거 → **유예 후 제거** | 소켓이 한 번 닫히면 모든 씬이 빈 로스터를 받고 `syncPlayers` 가 점수·목숨·그립을 새 레코드로 갈아엎었다. 2초짜리 wifi 끊김이 0점 재캘리브레이션이 된다. 볼링 10프레임·골프 9홀은 그 창을 훨씬 오래 연다 |
+| D49 | 볼링 릴리스를 **TRIGGER 엣지**로, 스윙 게이트는 폴백 | 실측 "세게" 여섯 번 중 하나가 297 deg/s로 끝나 300 임계를 못 넘었다 — 부드러운 딜리버리가 조용히 아무 일도 안 일으키는 실패다. 버튼 엣지는 마스크 비교로 만들어지고 keep-alive(D20) 덕에 센서가 멎어도 살아남으므로, 릴리스 시점이 ±50ms 추정이 아니라 정확해진다. Wii 리모컨의 B 트리거가 하던 일 그대로다 |
+| D50 | 골프 템포비는 **표시만 하고 채점하지 않는다** | 20Hz에서 구간 경계가 ±1샘플 = ±53ms라 3:1 템포가 2.4:1~3.8:1 어디로도 읽힌다. 네이티브 레이트 트레이스가 ±17ms를 증명하면 그때 넓은 밴드로 승격한다 |
 
 ### 13.2 가정
 
