@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { decodeSensor, parseTrace } from '@phonemote/protocol';
 import { ComplementaryFilter, angleDifference } from '../ComplementaryFilter.js';
-import type { CanonicalSensorFrame } from '../types.js';
+import { normalize } from '../SensorNormalizer.js';
+import type { CanonicalAngles, CanonicalSensorFrame } from '../types.js';
 
 function frame(
   overrides: Partial<CanonicalSensorFrame> & { dt?: number } = {},
@@ -17,6 +22,43 @@ function frame(
     buttons: 0,
     ...overrides,
   };
+}
+
+const CORPUS = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../traces/corpus');
+
+function canonicalTrace(name: string): CanonicalSensorFrame[] {
+  const trace = parseTrace(readFileSync(join(CORPUS, name), 'utf8'));
+  const frames: CanonicalSensorFrame[] = [];
+  let previousTimestamp: number | null = null;
+  for (const encoded of trace.frames) {
+    const raw = decodeSensor(encoded);
+    frames.push(normalize(raw, previousTimestamp));
+    previousTimestamp = raw.timestamp;
+  }
+  return frames;
+}
+
+/**
+ * Per frame, everything the filter added on top of dead reckoning: the pull
+ * towards gravity and nothing else. That is the part a player sees as a jump —
+ * the rest of the frame's movement is the phone actually turning.
+ */
+function correctionsInjectedDeg(name: string): number[] {
+  const filter = new ComplementaryFilter();
+  const injected: number[] = [];
+  let previous: CanonicalAngles | null = null;
+
+  for (const canonical of canonicalTrace(name)) {
+    const before = previous;
+    const after = filter.update(canonical);
+    previous = after;
+    if (before === null || canonical.dt <= 0) continue;
+
+    const gyroPitch = before.pitch + canonical.angularVelocity.pitch * canonical.dt;
+    const gyroRoll = before.roll + canonical.angularVelocity.roll * canonical.dt;
+    injected.push(Math.max(Math.abs(after.pitch - gyroPitch), Math.abs(after.roll - gyroRoll)));
+  }
+  return injected;
 }
 
 describe('angle difference', () => {
@@ -102,64 +144,128 @@ describe('fusion', () => {
   });
 });
 
-// TEMP MEASUREMENT BLOCK
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
-import { decodeSensor, parseTrace } from '@phonemote/protocol';
-import { normalize } from '../SensorNormalizer.js';
+/**
+ * The correction used to be spent once per sample, which made the filter's time
+ * constant whatever the frame rate happened to be: a 30 degree step in the
+ * gravity reference took 367 ms to close nine tenths of itself at 60 Hz, but
+ * 1100 ms at 20 Hz and 2200 ms at 10 Hz. The device recordings arrive at about
+ * 19 Hz, so the figure in the class comment described a rate no phone ran at.
+ */
+const STEP_DEG = 30;
+const STEP_90_AT_60HZ_MS = 367;
 
-const here2 = dirname(fileURLToPath(import.meta.url));
-const CORPUS2 = resolve(here2, '../../../../../traces/corpus');
+function stepResponse90Ms(dt: number): number {
+  const filter = new ComplementaryFilter();
+  const stepped = { yaw: 0, pitch: STEP_DEG, roll: 0 };
+  filter.update(frame({ dt: 0 }));
 
-function canonicalFrames(name: string): CanonicalSensorFrame[] {
-  const trace = parseTrace(readFileSync(join(CORPUS2, name), 'utf8'));
-  const out: CanonicalSensorFrame[] = [];
-  let previous: number | null = null;
-  for (const encoded of trace.frames) {
-    const raw = decodeSensor(encoded);
-    out.push(normalize(raw, previous));
-    previous = raw.timestamp;
+  for (let frames = 1; frames <= 10_000; frames++) {
+    if (filter.update(frame({ dt, orientation: stepped })).pitch >= STEP_DEG * 0.9) {
+      return frames * dt * 1000;
+    }
   }
-  return out;
+  throw new Error('the step never closed');
 }
 
-describe('TEMP measurements', () => {
-  it('step response at several rates', () => {
-    for (const dt of [1 / 120, 1 / 60, 1 / 20, 1 / 10]) {
-      const filter = new ComplementaryFilter();
-      filter.update(frame({ dt: 0, orientation: { yaw: 0, pitch: 0, roll: 0 } }));
-      let n = 0;
-      for (; n < 5000; n++) {
-        const r = filter.update(frame({ dt, orientation: { yaw: 0, pitch: 30, roll: 0 } }));
-        if (r.pitch >= 27) break;
-      }
-      console.log(`dt=${dt.toFixed(5)} frames=${n + 1} time=${((n + 1) * dt * 1000).toFixed(1)}ms`);
-    }
+describe.each([
+  { hz: 120, dt: 1 / 120 },
+  { hz: 60, dt: 1 / 60 },
+  { hz: 20, dt: 1 / 20 },
+  { hz: 10, dt: 1 / 10 },
+])('a phone streaming at $hz Hz', ({ dt }) => {
+  it('recovers from a step in gravity in the time the documentation claims', () => {
+    const elapsed = stepResponse90Ms(dt);
+    expect(elapsed).toBeGreaterThan(STEP_90_AT_60HZ_MS * 0.85);
+    expect(elapsed).toBeLessThan(STEP_90_AT_60HZ_MS * 1.15);
+  });
+});
+
+describe('the 60 Hz behaviour the weight was tuned at', () => {
+  it('still spends exactly the old share of the disagreement, to the last bit', () => {
+    const filter = new ComplementaryFilter({ gyroWeight: 0.9 });
+    filter.update(frame({ dt: 0 }));
+    const corrected = filter.update(frame({ orientation: { yaw: 0, pitch: 30, roll: 0 } }));
+    expect(corrected.pitch).toBe(30 * (1 - 0.9));
+  });
+});
+
+describe('gravity while the phone is being thrown around', () => {
+  it('is ignored outright above the rate a swing runs at', () => {
+    const filter = new ComplementaryFilter();
+    filter.update(frame({ dt: 0 }));
+
+    // A real swing peaks at 300-1211 deg/s. Nothing the accelerometer reports
+    // there is gravity, so the pose is the gyro's alone.
+    const swinging = filter.update(
+      frame({
+        orientation: { yaw: 0, pitch: 20, roll: 0 },
+        angularVelocity: { yaw: 400, pitch: 0, roll: 0 },
+      }),
+    );
+    expect(swinging.pitch).toBe(0);
   });
 
-  it('tail detail', () => {
-    for (const name of ['real-swing.pmtrace', 'phone-on-table.pmtrace']) {
-      const frames = canonicalFrames(name);
-      const filter = new ComplementaryFilter({ trustRecoverySeconds: 3 });
-      let previous: { yaw: number; pitch: number; roll: number } | null = null;
-      const rows: string[] = [];
-      for (const f of frames) {
-        const before = previous;
-        const after = filter.update(f);
-        if (before && f.dt > 0 && f.dt <= 0.25) {
-          const gyroPitch = before.pitch + f.angularVelocity.pitch * f.dt;
-          const gyroRoll = before.roll + f.angularVelocity.roll * f.dt;
-          const ip = Math.abs(after.pitch - gyroPitch);
-          const ir = Math.abs(after.roll - gyroRoll);
-          const w = Math.hypot(f.angularVelocity.yaw, f.angularVelocity.pitch, f.angularVelocity.roll);
-          const dp = after.pitch - f.orientation.pitch;
-          const dr = after.roll - f.orientation.roll;
-          rows.push(`  w=${w.toFixed(0).padStart(5)} err=${Math.hypot(dp, dr).toFixed(1).padStart(6)} inj=${Math.max(ip, ir).toFixed(2).padStart(6)}`);
-        }
-        previous = after;
-      }
-      console.log(name + String.fromCharCode(10) + rows.slice(-16).join(String.fromCharCode(10)));
+  it('counts for less the faster the phone is turning', () => {
+    const still = new ComplementaryFilter();
+    const turning = new ComplementaryFilter();
+    still.update(frame({ dt: 0 }));
+    turning.update(frame({ dt: 0 }));
+
+    const seen = { yaw: 0, pitch: 20, roll: 0 };
+    const calm = still.update(frame({ orientation: seen })).pitch;
+    // 150 deg/s about the aiming axis moves pitch not at all, so the whole
+    // difference between these two is the gate rather than the integration.
+    const brisk = turning.update(
+      frame({ orientation: seen, angularVelocity: { yaw: 0, pitch: 0, roll: 150 } }),
+    ).pitch;
+
+    expect(calm).toBeCloseTo(2, 6);
+    expect(brisk).toBeCloseTo(calm * (1 - 150 / 200), 6);
+  });
+
+  it('is taken back on a ramp rather than in one jump once the phone settles', () => {
+    const filter = new ComplementaryFilter();
+    filter.update(frame({ dt: 0 }));
+    // Three frames of a swing at the rate the recordings arrive at. Yaw does not
+    // feed the pitch integration, so the pose sits still while the gate shuts.
+    for (let i = 0; i < 3; i++) {
+      filter.update(frame({ dt: 1 / 20, angularVelocity: { yaw: 800, pitch: 0, roll: 0 } }));
     }
+
+    // The phone stops 45 degrees away from where the pose thinks it is, which is
+    // the disagreement measured at the peak of real-swing.pmtrace.
+    const settled = { yaw: 0, pitch: 45, roll: 0 };
+    expect(filter.update(frame({ dt: 1 / 20, orientation: settled })).pitch).toBeLessThan(1);
+
+    // It still gets there. It just does not arrive all at once.
+    for (let i = 0; i < 100; i++) filter.update(frame({ dt: 1 / 20, orientation: settled }));
+    expect(filter.update(frame({ dt: 1 / 20, orientation: settled })).pitch).toBeCloseTo(45, 1);
+  });
+});
+
+describe('a swing recorded on a real phone', () => {
+  it('never moves the pose a whole degree towards gravity in one frame', () => {
+    // The fixed gain put 4.6 degrees into a single frame, on the sample where the
+    // swing reversed and the accelerometer was worth the least.
+    const injected = correctionsInjectedDeg('real-swing.pmtrace');
+    expect(injected).not.toHaveLength(0);
+    expect(Math.max(...injected)).toBeLessThan(1);
+  });
+
+  it('leaves the pose to the gyro through the burst itself', () => {
+    // Three consecutive frames above 300 deg/s, and for those gravity contributes
+    // nothing at all rather than a little of something wrong.
+    const untouched = correctionsInjectedDeg('real-swing.pmtrace').filter((deg) => deg === 0);
+    expect(untouched.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('a phone held still, recorded on a real phone', () => {
+  it('goes on correcting every frame, because nothing there is dynamic', () => {
+    // A hand trying to hold still averages 3.34 deg/s against a 200 deg/s gate,
+    // so the gate has to be invisible in this trace.
+    const injected = correctionsInjectedDeg('real-rest.pmtrace');
+    expect(injected.every((deg) => deg > 0)).toBe(true);
+    expect(Math.max(...injected)).toBeLessThan(0.5);
   });
 });

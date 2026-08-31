@@ -121,9 +121,9 @@ export function signedPitch(grip: Grip, up: CanonicalVector): number {
  * scene, the same division of labour TiltMode already draws.
  *
  * The two components are the forward and right parts of one axis-angle vector,
- * so they are exact for a turn about a single axis and cross-talk by under a
- * tenth of a degree at ten degrees each, 1.6 degrees at twenty-five. Their
- * magnitude never exceeds the angle the phone actually moved through.
+ * so they are exact for a turn about a single axis and cross-talk by a tenth of
+ * a degree at ten degrees each, 1.6 degrees at twenty-five. Their magnitude
+ * never exceeds the angle the phone actually moved through.
  */
 export function tiltVector(
   grip: Grip,

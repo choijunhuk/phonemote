@@ -1,4 +1,4 @@
-import Phaser from 'phaser';
+import type Phaser from 'phaser';
 import { session } from '../../session.js';
 import { BaseGameScene } from './BaseGameScene.js';
 import type { GameAction } from '../../input/types.js';

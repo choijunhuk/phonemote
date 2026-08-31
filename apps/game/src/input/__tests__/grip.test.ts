@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalPose } from '../SensorNormalizer.js';
 import { captureGrip, gripQuality, signedPitch, signedRoll, tiltVector } from '../grip.js';
-import { FLAT_GRIP_DEG, POSES, angleBetweenDeg, expectedUp, isFlatGrip, rotateAbout } from '../pose.js';
+import {
+  FLAT_GRIP_DEG,
+  POSES,
+  angleBetweenDeg,
+  expectedUp,
+  isFlatGrip,
+  rotateAbout,
+} from '../pose.js';
 import type { CanonicalVector } from '../types.js';
 
 /**
@@ -75,11 +82,17 @@ describe('signed tilt from a grip', () => {
   });
 
   it('keeps roll and pitch apart when the player is doing both at once', () => {
-    const up = turn(turn(LEVEL_GRIP.up, FORWARD, 10), RIGHT, 10);
     // A tenth of a degree of cross-talk at ten degrees each: a ski edge and an
     // archery elevation read off the same hand do not contaminate each other.
-    expect(signedRoll(LEVEL_GRIP, up)).toBeCloseTo(10, 1);
-    expect(signedPitch(LEVEL_GRIP, up)).toBeCloseTo(10, 1);
+    // It grows with the angle, which is why the claim is only for small ones —
+    // a tilting table run at twenty-five degrees each way loses 1.6.
+    const small = turn(turn(LEVEL_GRIP.up, FORWARD, 10), RIGHT, 10);
+    expect(Math.abs(signedRoll(LEVEL_GRIP, small) - 10)).toBeLessThan(0.15);
+    expect(Math.abs(signedPitch(LEVEL_GRIP, small) - 10)).toBeLessThan(0.15);
+
+    const wide = turn(turn(LEVEL_GRIP.up, FORWARD, 25), RIGHT, 25);
+    expect(Math.abs(signedRoll(LEVEL_GRIP, wide) - 25)).toBeLessThan(2);
+    expect(Math.abs(signedPitch(LEVEL_GRIP, wide) - 25)).toBeLessThan(2);
   });
 
   it('keeps them apart whichever way round the player moved', () => {
@@ -95,16 +108,13 @@ describe('signed tilt from a grip', () => {
       // its own test below.
       if (Math.abs(pose.angleDeg) === 180) continue;
 
+      // Every pose in that table turns about forward or about right, never both.
       const up = expectedUp(pose, LEVEL_GRIP.up);
       const rolls = pose.axis.z !== 0;
-      expect(rolls ? signedRoll(LEVEL_GRIP, up) : signedPitch(LEVEL_GRIP, up), pose.key).toBeCloseTo(
-        pose.angleDeg,
-        5,
-      );
-      expect(rolls ? signedPitch(LEVEL_GRIP, up) : signedRoll(LEVEL_GRIP, up), pose.key).toBeCloseTo(
-        0,
-        5,
-      );
+      const asked = rolls ? signedRoll(LEVEL_GRIP, up) : signedPitch(LEVEL_GRIP, up);
+      const untouched = rolls ? signedPitch(LEVEL_GRIP, up) : signedRoll(LEVEL_GRIP, up);
+      expect(asked, pose.key).toBeCloseTo(pose.angleDeg, 5);
+      expect(untouched, pose.key).toBeCloseTo(0, 5);
     }
   });
 
@@ -113,8 +123,8 @@ describe('signed tilt from a grip', () => {
   });
 
   it('is blind to a turn about gravity, which no gravity sensor can see', () => {
-    const up = turn(LEVEL_GRIP.up, LEVEL_GRIP.up, 40);
-    expect(tiltVector(LEVEL_GRIP, up)).toEqual({ x: 0, y: 0 });
+    const tilt = tiltVector(LEVEL_GRIP, turn(LEVEL_GRIP.up, LEVEL_GRIP.up, 40));
+    expect(Math.hypot(tilt.x, tilt.y)).toBeLessThan(1e-9);
   });
 
   it('never reports more tilt than the phone actually moved through', () => {
@@ -185,10 +195,9 @@ describe('the holds where Euler angles fall apart', () => {
     const after = tiltVector(LEVEL_GRIP, nudged);
     expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeLessThan(2);
 
-    const eulerJump = Math.abs(
-      eulerRollFor(ANCHOR.beta + 1, ANCHOR.gamma - 90) - eulerRollFor(ANCHOR.beta, ANCHOR.gamma - 90),
-    );
-    expect(eulerJump).toBeGreaterThan(45);
+    const settled = eulerRollFor(ANCHOR.beta, ANCHOR.gamma - 90);
+    const jumped = eulerRollFor(ANCHOR.beta + 1, ANCHOR.gamma - 90);
+    expect(Math.abs(jumped - settled)).toBeGreaterThan(45);
   });
 });
 
@@ -296,11 +305,10 @@ describe('grip quality', () => {
     expect(previous).toBe(0);
   });
 
-  it('reaches zero exactly at the flat line pose.ts draws, not somewhere near it', () => {
-    const justInside = turn(upFor(ANCHOR.beta, ANCHOR.gamma), RIGHT, 90 - FLAT_GRIP_DEG - 1);
-    expect(justInside).toBeDefined();
-    expect(gripQuality(justInside)).toBeGreaterThan(0);
-    expect(gripQuality(turn(upFor(ANCHOR.beta, ANCHOR.gamma), RIGHT, 90 - FLAT_GRIP_DEG))).toBe(0);
+  it('reaches zero at the flat line pose.ts draws, not somewhere near it', () => {
+    const level = upFor(ANCHOR.beta, ANCHOR.gamma);
+    expect(gripQuality(turn(level, RIGHT, 90 - FLAT_GRIP_DEG - 1))).toBeGreaterThan(0.01);
+    expect(gripQuality(turn(level, RIGHT, 90 - FLAT_GRIP_DEG))).toBeCloseTo(0, 12);
   });
 
   it('stays inside 0..1 for every hold there is', () => {

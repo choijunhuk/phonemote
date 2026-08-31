@@ -8,13 +8,17 @@ import type { CanonicalAngles, CanonicalSensorFrame } from './types.js';
  * phone is accelerated. Leaning on the gyro moment to moment and nudging it
  * back towards gravity keeps both problems small.
  *
+ * How hard it nudges depends on how much time the frame covers and on whether
+ * the accelerometer can be reading gravity at all, which it cannot while the
+ * phone is being swung. Both of those are in the constants below.
+ *
  * Yaw gets no such treatment. Chrome's relative deviceorientation has no
  * absolute heading to nudge towards, so yaw here is a running total since the
  * last reset and is only ever meaningful as a difference.
  */
 
 export interface FusionOptions {
-  /** Share of each update taken from the gyro. Nearer 1 is smoother, slower. */
+  /** Share of an update taken from the gyro at 60 Hz. Nearer 1 is smoother. */
   readonly gyroWeight?: number;
   /** A gap longer than this means the stream stalled; start over. */
   readonly maxGapSeconds?: number;
@@ -36,14 +40,14 @@ const DEFAULT_MAX_GAP_SECONDS = 0.25;
 /**
  * The rate the weight above is quoted at.
  *
- * A weight is a per-frame survival factor, so applying it once per sample makes
+ * A weight is a per-frame survival factor, so spending it once per sample makes
  * the time constant a function of the frame rate. Measured on a 30 degree step
  * in the gravity reference, the time to close 90% of it was 367 ms at 60 Hz but
- * 1100 ms at 20 Hz and 2200 ms at 10 Hz — and the real device recordings arrive
- * at about 19 Hz, so the filter was three times slower in the field than the
- * one number anybody had ever measured. Reading the weight at 60 Hz, converting
- * it to a time constant and spending that against dt keeps 60 Hz exactly where
- * it was and drags every other rate onto the same curve.
+ * 1100 ms at 20 Hz and 2200 ms at 10 Hz. The device recordings arrive at about
+ * 19 Hz, so the filter as shipped was three times slower than the 0.2 s this
+ * file used to claim. Reading the weight at one fixed rate, turning it into a
+ * time constant and spending that against dt leaves 60 Hz bit for bit where it
+ * was and drags every other rate onto the same curve.
  *
  * OneEuroFilter has always done this correctly — its alphaFor takes dt — so
  * until now the two filters here disagreed about what dt meant.
@@ -146,9 +150,11 @@ export class ComplementaryFilter {
     const gyroPitch = this.pitch + angularVelocity.pitch * dt;
     const gyroRoll = this.roll + angularVelocity.roll * dt;
 
+    // All three axes, though only two are corrected: a swing about yaw throws
+    // the accelerometer off exactly as much as one about pitch.
     const rate = Math.hypot(angularVelocity.yaw, angularVelocity.pitch, angularVelocity.roll);
-    const believable = Math.min(1, Math.max(0, 1 - rate / this.trustCutoff));
-    this.trust = Math.min(believable, this.trust + dt / this.trustRecoverySeconds);
+    const instantTrust = Math.min(1, Math.max(0, 1 - rate / this.trustCutoff));
+    this.trust = Math.min(instantTrust, this.trust + dt / this.trustRecoverySeconds);
     const correction = this.trust * (1 - Math.exp(-dt / this.correctionTau));
 
     // Correct along the shortest arc so the seam at +-180 does not spin things.

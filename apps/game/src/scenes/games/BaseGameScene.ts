@@ -107,7 +107,9 @@ export abstract class BaseGameScene extends Phaser.Scene {
   protected abstract step(dt: number): void;
 
   /** Everything except HOME, which is handled for you. */
-  protected onGameAction(_action: GameAction): void {}
+  protected onGameAction(action: GameAction): void {
+    void action;
+  }
 
   /** Anything to release beyond the action listener. */
   protected teardown(): void {}
