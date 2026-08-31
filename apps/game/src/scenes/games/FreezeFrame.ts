@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
 import {
   POSES,
-  angleBetweenDeg,
   poseCloseness,
-  rotateFromReference,
+  poseOffByDeg,
+  posesUsableFrom,
   type NamedPose,
 } from '../../input/pose.js';
 import { session } from '../../session.js';
@@ -73,7 +73,8 @@ export class FreezeFrame extends Phaser.Scene {
   private phase: Phase = 'ready';
   private timer = 0;
   private round = 0;
-  private pose: NamedPose = POSES[0] ?? { key: 'level', label: '똑바로', up: { x: 0, y: 1, z: 0 } };
+  private pose: NamedPose =
+    POSES[0] ?? { key: 'level', label: '그대로', axis: { x: 0, y: 0, z: -1 }, angleDeg: 0 };
   private tolerance = TOLERANCE_START;
   private readyFor = 0;
 
@@ -144,9 +145,10 @@ export class FreezeFrame extends Phaser.Scene {
           if (!contestant.reference) return;
 
           // Judged in the player's own frame, so the grip they chose is level.
-          const aligned = rotateFromReference(action.up, contestant.reference);
-          contestant.offBy = angleBetweenDeg(this.pose.up, aligned);
-          contestant.closeness = poseCloseness(this.pose.up, aligned, this.tolerance);
+          // Judged as a rotation from this player's own grip, which keeps the
+          // direction of the movement — the part an alignment onto "up" loses.
+          contestant.offBy = poseOffByDeg(this.pose, contestant.reference, action.up);
+          contestant.closeness = poseCloseness(contestant.offBy, this.tolerance);
           contestant.held = contestant.offBy <= this.tolerance;
           if (this.phase === 'holding' && this.timer <= ROUND_SECONDS * (1 - JUDGE_AFTER)) {
             contestant.bestOffBy = Math.min(contestant.bestOffBy, contestant.offBy);
@@ -241,7 +243,13 @@ export class FreezeFrame extends Phaser.Scene {
     const progress = Math.min(1, (this.round - 1) / TIGHTEN_OVER);
     this.tolerance = TOLERANCE_START - (TOLERANCE_START - TOLERANCE_FLOOR) * progress;
 
-    const choices = POSES.filter((pose) => pose.key !== this.pose.key);
+    // Only poses this grip can actually distinguish: gravity cannot see a turn
+    // about itself, and calling one would be asking the player to stand still.
+    const reference = [...this.contestants.values()].find((c) => c.reference)?.reference;
+    const available = reference
+      ? posesUsableFrom(reference, Math.max(30, this.tolerance))
+      : [...POSES];
+    const choices = available.filter((pose) => pose.key !== this.pose.key);
     this.pose = choices[Math.floor(Math.random() * choices.length)] ?? this.pose;
 
     this.phase = 'holding';

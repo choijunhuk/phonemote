@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SENSOR_FLAG, SENSOR_FRAME_VERSION, type SensorFrame } from '@phonemote/protocol';
 import { InputMapper } from '../InputMapper.js';
-import { POSES, angleBetweenDeg, poseByKey } from '../pose.js';
+import { POSES, angleBetweenDeg, expectedUp, poseByKey, poseOffByDeg } from '../pose.js';
 import type { CanonicalVector } from '../types.js';
 
 /**
@@ -53,11 +53,11 @@ describe('the pose action', () => {
     expect(mapper.update(frame(0, -90)).some((action) => action.kind === 'pose')).toBe(false);
   });
 
-  it('reports level as the level pose', () => {
-    const up = upFrom(0, -90);
+  it('reports the level hold as the level pose', () => {
+    const grip = upFrom(0, -90);
     const level = poseByKey('level');
-    expect(level).toBeDefined();
-    expect(angleBetweenDeg(level?.up ?? up, up)).toBeLessThan(5);
+    if (!level) throw new Error('missing pose');
+    expect(poseOffByDeg(level, grip, grip)).toBeLessThan(1);
   });
 
   it('is unaffected by which way the player is facing', () => {
@@ -80,19 +80,29 @@ describe('the pose action', () => {
       { key: 'diagonal-left', beta: -45, gamma: -90 },
     ];
 
+    const grip = upFrom(0, -90);
     for (const { key, beta, gamma } of cases) {
-      const expected = poseByKey(key);
-      expect(expected, key).toBeDefined();
-      const measured = upFrom(beta, gamma);
-      expect(angleBetweenDeg(expected?.up ?? measured, measured), key).toBeLessThan(10);
+      const pose = poseByKey(key);
+      expect(pose, key).toBeDefined();
+      if (!pose) continue;
+      expect(poseOffByDeg(pose, grip, upFrom(beta, gamma)), key).toBeLessThan(10);
     }
   });
 
-  it('finds exactly one matching pose for each of those holds', () => {
-    // If two poses answered to the same hold, a round would be unwinnable for
-    // reasons the player could never see.
-    const measured = upFrom(0, -90);
-    const matches = POSES.filter((pose) => angleBetweenDeg(pose.up, measured) < 35);
-    expect(matches.map((pose) => pose.key)).toEqual(['level']);
+  it('answers a hold with exactly one pose', () => {
+    // If two poses answered the same hold, a round would be unwinnable for a
+    // reason the player could never see.
+    const grip = upFrom(0, -90);
+    const measured = upFrom(90, -90);
+    const matches = POSES.filter((pose) => poseOffByDeg(pose, grip, measured) < 35);
+    expect(matches.map((pose) => pose.key)).toEqual(['tilt-right']);
+  });
+
+  it('keeps the target a unit vector for every pose', () => {
+    const grip = upFrom(45, -120);
+    for (const pose of POSES) {
+      const target = expectedUp(pose, grip);
+      expect(Math.hypot(target.x, target.y, target.z), pose.key).toBeCloseTo(1, 6);
+    }
   });
 });
