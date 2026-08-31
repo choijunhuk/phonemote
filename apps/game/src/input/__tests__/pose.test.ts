@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalPose } from '../SensorNormalizer.js';
-import { POSES, angleBetweenDeg, poseCloseness, poseMatches, poseByKey } from '../pose.js';
+import {
+  POSES,
+  angleBetweenDeg,
+  poseByKey,
+  poseCloseness,
+  poseMatches,
+  rotateFromReference,
+} from '../pose.js';
 
 /**
  * These tie the gravity vector to physical poses. If a real phone disagrees,
@@ -97,6 +104,52 @@ describe('matching a pose', () => {
   });
 });
 
+describe('judging in the player’s own frame', () => {
+  const level = { x: 0, y: 1, z: 0 };
+
+  it('treats whatever grip was calibrated as level', () => {
+    // Someone holding the phone rolled 40 degrees over and aimed 20 down.
+    const grip = upFor(ANCHOR.beta + 40, ANCHOR.gamma + 20);
+    expect(poseMatches(level, grip, 20)).toBe(false);
+    expect(poseMatches(level, rotateFromReference(grip, grip), 20)).toBe(true);
+  });
+
+  it('keeps the same movement meaning the same thing from an odd grip', () => {
+    const grip = upFor(ANCHOR.beta + 40, ANCHOR.gamma + 20);
+    // From that grip, roll a further 90 degrees right.
+    const rolled = upFor(ANCHOR.beta + 130, ANCHOR.gamma + 20);
+    const aligned = rotateFromReference(rolled, grip);
+
+    const tiltRight = poseByKey('tilt-right');
+    expect(tiltRight).toBeDefined();
+    expect(angleBetweenDeg(tiltRight?.up ?? aligned, aligned)).toBeLessThan(25);
+  });
+
+  it('leaves a canonical grip untouched', () => {
+    const canonical = upFor(ANCHOR.beta, ANCHOR.gamma);
+    const other = upFor(ANCHOR.beta + 90, ANCHOR.gamma);
+    const aligned = rotateFromReference(other, canonical);
+    expect(angleBetweenDeg(aligned, other)).toBeLessThan(1);
+  });
+
+  it('preserves the angle between any two holds', () => {
+    // Rotating into another frame must not distort how far apart poses are.
+    const grip = upFor(ANCHOR.beta - 60, ANCHOR.gamma + 35);
+    const a = upFor(ANCHOR.beta + 20, ANCHOR.gamma);
+    const b = upFor(ANCHOR.beta, ANCHOR.gamma - 45);
+    expect(angleBetweenDeg(rotateFromReference(a, grip), rotateFromReference(b, grip))).toBeCloseTo(
+      angleBetweenDeg(a, b),
+      4,
+    );
+  });
+
+  it('handles a grip that is exactly upside down', () => {
+    const upsideDown = { x: 0, y: -1, z: 0 };
+    const aligned = rotateFromReference(upsideDown, upsideDown);
+    expect(angleBetweenDeg(aligned, level)).toBeLessThan(1);
+  });
+});
+
 describe('the pose list', () => {
   it('has unique keys and unit vectors', () => {
     const keys = POSES.map((pose) => pose.key);
@@ -116,7 +169,7 @@ describe('the pose list', () => {
   });
 
   it('looks a pose up by key', () => {
-    expect(poseByKey('aim-up')?.label).toBe('천장 겨누기');
+    expect(poseByKey('aim-up')?.label).toBe('끝을 하늘로');
     expect(poseByKey('nonsense')).toBeUndefined();
   });
 });

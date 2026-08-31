@@ -1,6 +1,13 @@
 import Phaser from 'phaser';
-import { POSES, poseCloseness, poseMatches, type NamedPose } from '../../input/pose.js';
+import {
+  POSES,
+  poseCloseness,
+  poseMatches,
+  rotateFromReference,
+  type NamedPose,
+} from '../../input/pose.js';
 import { session } from '../../session.js';
+import type { CanonicalVector } from '../../input/types.js';
 import { sfx } from '../../ui/audio.js';
 
 /**
@@ -23,7 +30,7 @@ const TOLERANCE_FLOOR = 16;
 /** Rounds survived before the tolerance stops tightening. */
 const TIGHTEN_OVER = 8;
 
-type Phase = 'calling' | 'holding' | 'reveal' | 'over';
+type Phase = 'ready' | 'holding' | 'reveal' | 'over';
 
 interface Contestant {
   readonly playerId: number;
@@ -37,10 +44,19 @@ interface Contestant {
   out: boolean;
   closeness: number;
   held: boolean;
+  /**
+   * The hold this player calibrated as their own "level". Poses are written
+   * against the canonical landscape grip, but nobody holds a phone to a
+   * specification, and a pose game that silently demands one fails every round
+   * for a reason nobody in the room can see.
+   */
+  reference: CanonicalVector | null;
+  /** Most recent reading, so A can adopt it as the reference. */
+  lastUp: CanonicalVector | null;
 }
 
 export class FreezeFrame extends Phaser.Scene {
-  private phase: Phase = 'calling';
+  private phase: Phase = 'ready';
   private timer = 0;
   private round = 0;
   private pose: NamedPose = POSES[0] ?? { key: 'level', label: '똑바로', up: { x: 0, y: 1, z: 0 } };
@@ -108,16 +124,19 @@ export class FreezeFrame extends Phaser.Scene {
         // (ARCHITECTURE.md 5.8).
         if (action.kind === 'pose') {
           const contestant = this.contestants.get(action.playerId);
-          if (contestant) {
-            contestant.closeness = poseCloseness(this.pose.up, action.up, this.tolerance);
-            contestant.held = poseMatches(this.pose.up, action.up, this.tolerance);
-          }
+          if (!contestant) return;
+          contestant.lastUp = action.up;
+          if (!contestant.reference) return;
+
+          // Judged in the player's own frame, so the grip they chose is level.
+          const aligned = rotateFromReference(action.up, contestant.reference);
+          contestant.closeness = poseCloseness(this.pose.up, aligned, this.tolerance);
+          contestant.held = poseMatches(this.pose.up, aligned, this.tolerance);
           return;
         }
-        if (action.kind === 'button_down' && action.button === 'HOME') this.scene.start('lobby');
-        if (action.kind === 'button_down' && action.button === 'A' && this.phase === 'over') {
-          this.scene.restart();
-        }
+        if (action.kind !== 'button_down') return;
+        if (action.button === 'HOME') this.scene.start('lobby');
+        if (action.button === 'A') this.pressA(action.playerId);
       }),
     );
 
@@ -129,14 +148,13 @@ export class FreezeFrame extends Phaser.Scene {
       this.contestants.clear();
     });
 
-    this.startRound();
+    this.phase = 'ready';
   }
 
   override update(_time: number, delta: number): void {
     const dt = Math.min(delta / 1000, 1 / 30);
 
     switch (this.phase) {
-      case 'calling':
       case 'holding': {
         this.timer -= dt;
         this.timerBar.setScale(Math.max(0, this.timer / ROUND_SECONDS), 1);
@@ -153,6 +171,31 @@ export class FreezeFrame extends Phaser.Scene {
     }
 
     this.render();
+  }
+
+  /**
+   * A does double duty: set your grip before the game, restart it after.
+   */
+  private pressA(playerId: number): void {
+    if (this.phase === 'over') {
+      this.scene.restart();
+      return;
+    }
+    const contestant = this.contestants.get(playerId);
+    if (!contestant?.lastUp) return;
+
+    contestant.reference = contestant.lastUp;
+    contestant.closeness = 1;
+    contestant.held = true;
+    session.vibrate(playerId, [30]);
+    session.log(`기준 자세 설정 P${playerId}`);
+
+    if (this.phase === 'ready' && this.everyoneReady()) this.startRound();
+  }
+
+  private everyoneReady(): boolean {
+    const contestants = [...this.contestants.values()];
+    return contestants.length > 0 && contestants.every((contestant) => contestant.reference);
   }
 
   private startRound(): void {
@@ -198,6 +241,17 @@ export class FreezeFrame extends Phaser.Scene {
 
   private rebuildContestants(): void {
     const { width, height } = this.scale;
+    // Somebody joining must not cost everyone else their grip and their score.
+    const carried = new Map(
+      [...this.contestants.values()].map((contestant) => [
+        contestant.playerId,
+        {
+          score: contestant.score,
+          reference: contestant.reference,
+          lastUp: contestant.lastUp,
+        },
+      ]),
+    );
     for (const contestant of this.contestants.values()) contestant.card.destroy();
     this.contestants.clear();
 
@@ -237,26 +291,35 @@ export class FreezeFrame extends Phaser.Scene {
         nameText,
         scoreText,
         meter,
-        score: 0,
+        score: carried.get(player.id)?.score ?? 0,
         out: false,
         closeness: 0,
         held: false,
+        reference: carried.get(player.id)?.reference ?? null,
+        lastUp: carried.get(player.id)?.lastUp ?? null,
       });
     });
   }
 
   private render(): void {
-    this.poseText.setText(this.phase === 'over' ? '끝!' : this.pose.label);
+    this.poseText.setText(
+      this.phase === 'over' ? '끝!' : this.phase === 'ready' ? '준비' : this.pose.label,
+    );
 
     const held = [...this.contestants.values()].filter((contestant) => contestant.held).length;
+    const waiting = [...this.contestants.values()].filter(
+      (contestant) => !contestant.reference,
+    ).length;
     this.phaseText.setText(
       this.contestants.size === 0
         ? '폰을 연결하세요 (?fake=1 로 키보드 사용)'
-        : this.phase === 'holding'
-          ? `자세를 유지하세요 — ${held}/${this.contestants.size} 성공 중   (허용 ${this.tolerance.toFixed(0)}°)`
-          : this.phase === 'reveal'
-            ? `${this.round}라운드 결과`
-            : 'A: 다시',
+        : this.phase === 'ready'
+          ? `편한 자세로 폰을 들고 A — ${waiting}명 남음 (그 자세가 기준이 됩니다)`
+          : this.phase === 'holding'
+            ? `자세를 유지하세요 — ${held}/${this.contestants.size} 성공 중   (허용 ${this.tolerance.toFixed(0)}°)`
+            : this.phase === 'reveal'
+              ? `${this.round}라운드 결과`
+              : 'A: 다시',
     );
 
     for (const contestant of this.contestants.values()) {

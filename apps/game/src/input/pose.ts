@@ -35,6 +35,57 @@ export function angleBetweenDeg(a: CanonicalVector, b: CanonicalVector): number 
   return (Math.acos(Math.min(1, Math.max(-1, dot))) * 180) / Math.PI;
 }
 
+/**
+ * Rotates a measured direction into the frame of a reference hold.
+ *
+ * Poses are written against the canonical landscape hold, but a player holds
+ * the phone however they like — and a pose game that silently requires one
+ * grip fails every round for a reason nobody in the room can see. Whatever way
+ * they were holding it when they calibrated becomes "level", and every pose is
+ * judged relative to that.
+ *
+ * This is the shortest rotation taking the reference onto canonical up. The
+ * remaining freedom is a spin about the up axis, which no pose here
+ * distinguishes, so it does not matter that we cannot observe it.
+ */
+export function rotateFromReference(
+  vector: CanonicalVector,
+  reference: CanonicalVector,
+): CanonicalVector {
+  const from = normalise(reference);
+  const to = { x: 0, y: 1, z: 0 };
+
+  const dot = from.x * to.x + from.y * to.y + from.z * to.z;
+  if (dot > 0.9999) return vector;
+  if (dot < -0.9999) {
+    // Exactly upside down: any axis perpendicular to up will do.
+    return { x: -vector.x, y: -vector.y, z: vector.z };
+  }
+
+  const axis = normalise({
+    x: from.y * to.z - from.z * to.y,
+    y: from.z * to.x - from.x * to.z,
+    z: from.x * to.y - from.y * to.x,
+  });
+  const angle = Math.acos(Math.min(1, Math.max(-1, dot)));
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  // Rodrigues: v cos + (k x v) sin + k (k . v)(1 - cos)
+  const cross = {
+    x: axis.y * vector.z - axis.z * vector.y,
+    y: axis.z * vector.x - axis.x * vector.z,
+    z: axis.x * vector.y - axis.y * vector.x,
+  };
+  const along = axis.x * vector.x + axis.y * vector.y + axis.z * vector.z;
+
+  return {
+    x: vector.x * cos + cross.x * sin + axis.x * along * (1 - cos),
+    y: vector.y * cos + cross.y * sin + axis.y * along * (1 - cos),
+    z: vector.z * cos + cross.z * sin + axis.z * along * (1 - cos),
+  };
+}
+
 export function poseMatches(
   target: CanonicalVector,
   measured: CanonicalVector,
@@ -60,17 +111,21 @@ export function poseCloseness(
 /**
  * The poses a phone can be asked to hold, in canonical terms.
  *
+ * The labels describe a movement from the grip the player calibrated, not an
+ * absolute direction, because that is what the judging does. "Aim at the
+ * ceiling" would be a lie the moment somebody held the phone differently.
+ *
  * Canonical axes: +X right, +Y up, +Z out of the screen towards the player,
  * and the phone aims along -Z. So "level" puts world up along +Y, aiming at
  * the ceiling rotates it onto -Z, and laying the phone screen-up puts it on +Z.
  */
 export const POSES: readonly NamedPose[] = [
-  { key: 'level', label: '똑바로 들기', up: { x: 0, y: 1, z: 0 } },
+  { key: 'level', label: '그대로', up: { x: 0, y: 1, z: 0 } },
   { key: 'tilt-right', label: '오른쪽으로 눕히기', up: { x: -1, y: 0, z: 0 } },
   { key: 'tilt-left', label: '왼쪽으로 눕히기', up: { x: 1, y: 0, z: 0 } },
-  { key: 'aim-up', label: '천장 겨누기', up: { x: 0, y: 0, z: -1 } },
-  { key: 'aim-down', label: '바닥 겨누기', up: { x: 0, y: 0, z: 1 } },
-  { key: 'upside-down', label: '거꾸로 들기', up: { x: 0, y: -1, z: 0 } },
+  { key: 'aim-up', label: '끝을 하늘로', up: { x: 0, y: 0, z: -1 } },
+  { key: 'aim-down', label: '끝을 바닥으로', up: { x: 0, y: 0, z: 1 } },
+  { key: 'upside-down', label: '거꾸로 뒤집기', up: { x: 0, y: -1, z: 0 } },
   {
     key: 'diagonal-right',
     label: '오른쪽으로 45도',
