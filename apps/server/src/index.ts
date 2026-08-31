@@ -17,6 +17,7 @@ import { loadTlsMaterial, MissingCertificateError } from './https.js';
 import { resolveLanIp } from './lanIp.js';
 import { RoomRegistry, type Connection } from './room.js';
 import { TraceRecorder, listTraces, readTrace } from './recorder.js';
+import { MAX_LOG_BYTES, appendLog, listLogs } from './logs.js';
 
 /**
  * Relay server.
@@ -59,6 +60,47 @@ function main(): void {
           recording: recorder?.stats ?? null,
         }),
       );
+      return;
+    }
+
+    // The game writes its measurements here so they can be read afterwards by
+    // someone who was not in the room.
+    if (req.url === '/log' && req.method === 'POST') {
+      let body = '';
+      let tooBig = false;
+      req.on('data', (chunk: Buffer) => {
+        body += chunk.toString('utf8');
+        if (body.length > MAX_LOG_BYTES) {
+          tooBig = true;
+          req.destroy();
+        }
+      });
+      req.on('end', () => {
+        const result = tooBig ? { ok: false as const, why: 'too large' } : appendLog(body);
+        res.writeHead(result.ok ? 200 : 400, {
+          'content-type': 'application/json',
+          'access-control-allow-origin': '*',
+        });
+        res.end(JSON.stringify(result));
+        if (result.ok) console.log(`[log] wrote ${result.bytes} bytes`);
+      });
+      return;
+    }
+    if (req.url === '/log' && req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
+      });
+      res.end();
+      return;
+    }
+    if (req.url === '/logs') {
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'access-control-allow-origin': '*',
+      });
+      res.end(JSON.stringify(listLogs()));
       return;
     }
 

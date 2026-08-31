@@ -3,6 +3,7 @@ import { CalibrationScene } from './scenes/CalibrationScene.js';
 import { LobbyScene } from './scenes/LobbyScene.js';
 import { GAMES } from './games.js';
 import { session } from './session.js';
+import { AxisRecorder } from './ui/AxisRecorder.js';
 import { DebugOverlay } from './ui/DebugOverlay.js';
 
 /**
@@ -19,6 +20,9 @@ session.start();
 
 const overlay = new DebugOverlay();
 overlay.start();
+
+// Press r to walk through the axis measurements and post them to the relay.
+new AxisRecorder();
 
 // Development stand-ins. Both push frames through the real pipeline rather
 // than faking GameActions, so the game can be played, and a change felt,

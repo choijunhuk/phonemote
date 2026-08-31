@@ -11,7 +11,8 @@
     "throughput": "tsx src/throughput.ts",
     "play": "tsx src/index.ts",
     "corpus": "tsx src/makeCorpus.ts",
-    "record": "tsx src/index.ts --record"
+    "record": "tsx src/index.ts --record",
+    "axis": "tsx src/readAxisLog.ts"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",

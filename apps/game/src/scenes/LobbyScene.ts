@@ -234,7 +234,7 @@ export class LobbyScene extends Phaser.Scene {
     this.hintText.setText(
       players.length === 0
         ? '폰을 연결하거나, 키보드 ↑↓ + Enter 로 바로 시작할 수 있습니다'
-        : '폰을 겨눠 고르고 A로 시작   ·   B 다음 항목   ·   키보드 ↑↓ Enter',
+        : '폰을 겨눠 고르고 A로 시작   ·   B 다음 항목   ·   키보드 ↑↓ Enter   ·   r 축 측정',
     );
   }
 
