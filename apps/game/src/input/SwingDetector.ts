@@ -161,7 +161,13 @@ export class SwingDetector {
     }
 
     if (now < this.cooldownUntil) return null;
-    if (rate <= SWING_OMEGA_ON) return null;
+    if (rate <= SWING_OMEGA_ON) {
+      // Arming has to be consecutive. Without this the counter survives the
+      // quiet in between, so after the first stray sample the detector is
+      // effectively armed by any single spike, whenever it arrives.
+      this.armed = 0;
+      return null;
+    }
 
     this.armed += 1;
     if (this.armed < SWING_ARM_SAMPLES) return null;

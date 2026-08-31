@@ -7,6 +7,7 @@ import {
   isMatchPoint,
   step,
   swing,
+  swingPower,
   type Side,
   type TennisState,
 } from './tennisState.js';
@@ -31,10 +32,14 @@ export class Tennis extends Phaser.Scene {
   private lastPlayerCount = 0;
   private ball!: Phaser.GameObjects.Arc;
   private readonly rackets = new Map<Side, Phaser.GameObjects.Rectangle>();
+  private readonly bands = new Map<Side, Phaser.GameObjects.Rectangle>();
   private scoreText!: Phaser.GameObjects.Text;
   private phaseText!: Phaser.GameObjects.Text;
   private rallyText!: Phaser.GameObjects.Text;
   private lastPhase: TennisState['phase'] = 'serve';
+  private overSince = 0;
+  private waiting = false;
+  private lastDelta = 1 / 60;
   private swingFeedback!: Phaser.GameObjects.Text;
   private modeText!: Phaser.GameObjects.Text;
   private cleanup: (() => void) | null = null;
@@ -66,25 +71,34 @@ export class Tennis extends Phaser.Scene {
         const result = swing(
           this.state,
           side,
-          action.strength,
+          action.peakRate,
           action.direction8,
           action.direction,
         );
+        // Power comes from the peak rate, not from strength: strength saturates
+        // where a real swing begins, so it was 1.0 every time and every hit
+        // sounded, buzzed and shook identically.
+        const power = swingPower(action.peakRate);
         if (result.hit) {
-          sfx.hit(action.strength);
-          session.vibrate(action.playerId, [Math.round(25 + action.strength * 65)]);
-          this.cameras.main.shake(90, 0.002 + action.strength * 0.004);
-          this.showSwingFeedback('맞음', '#2ed573');
+          sfx.hit(power);
+          session.vibrate(action.playerId, [Math.round(25 + power * 55)]);
+          // Only a genuinely hard shot is worth shaking the screen for; a long
+          // rally of small shakes is just noise.
+          if (power > 0.7) this.cameras.main.shake(90, 0.004 + power * 0.006);
+          this.showSwingFeedback('맞음', '#2ed573', side);
           session.log(
-            `타격 P${side} 강도 ${action.strength.toFixed(2)} ${action.direction8} ` +
-              `→ 속도 ${this.state.ball.vx.toFixed(2)}`,
+            `타격 P${side} ${Math.round(action.peakRate)}°/s (파워 ${power.toFixed(2)}) ` +
+              `${action.direction8} → 속도 ${this.state.ball.vx.toFixed(2)}`,
           );
-        } else {
-          // The swing was seen; it just did not connect. Saying so is the
-          // difference between bad timing and a controller that looks dead.
+        } else if (result.miss !== null) {
+          // Only when a live ball was genuinely missed. The state machine
+          // reports no miss during a point or after the match, and printing
+          // "too late" while the player is celebrating a point is a lie.
           sfx.whiff();
-          session.vibrate(action.playerId, [15]);
-          this.showSwingFeedback(MISS_TEXT[result.miss ?? 'late'], '#ffa502');
+          // 15 ms is below what an Android motor can even spin up to, so a
+          // whiff and a dead phone felt identical in the hand.
+          session.vibrate(action.playerId, [25, 45, 25]);
+          this.showSwingFeedback(MISS_TEXT[result.miss], '#ffa502', side);
           session.log(
             `빗나감 P${side} ${result.miss ?? '?'} 공x ${this.state.ball.x.toFixed(2)} ` +
               `속도 ${this.state.ball.vx.toFixed(2)}`,
@@ -113,19 +127,36 @@ export class Tennis extends Phaser.Scene {
     // nobody played.
     const dt = Math.min(delta / 1000, 1 / 30);
 
-    // One phone cannot play two-player tennis: every ball that crosses would
-    // be an instant point, which reads as the game resetting itself.
     if (session.players.length !== this.lastPlayerCount) {
-      session.log(`플레이어 ${this.lastPlayerCount} → ${session.players.length}, 재시작`);
-      this.scene.restart();
+      session.log(`플레이어 ${this.lastPlayerCount} → ${session.players.length}`);
+      this.lastPlayerCount = session.players.length;
+    }
+
+    // A phone that drops out for a moment used to restart the scene, wiping a
+    // 4-3 game because of one bad second of wifi. Pause instead: the score is
+    // still there when they come back.
+    this.waiting = session.players.length < this.state.config.players;
+    if (this.waiting) {
+      this.render();
       return;
     }
 
+    this.lastDelta = dt;
     const before = this.state.ball.vx;
     step(this.state, dt);
 
     // The wall in practice mode reverses the ball without anyone swinging.
     if (this.state.config.players === 1 && before > 0 && this.state.ball.vx < 0) sfx.wall();
+
+    if (this.state.phase === 'gameover') {
+      // Never a dead screen. A match that ended while everyone had put their
+      // phone down would otherwise sit there until somebody found a keyboard.
+      this.overSince += dt;
+      if (this.overSince > 8) {
+        this.scene.start('lobby');
+        return;
+      }
+    }
 
     if (this.state.phase !== this.lastPhase) {
       if (this.state.phase === 'point') {
@@ -161,11 +192,45 @@ export class Tennis extends Phaser.Scene {
       .setOrigin(0)
       .setLineWidth(2);
 
+    // The hit zone is the racket. A 14 px bat in the middle of a band a third
+    // of the court wide told the player the window was shut while it was still
+    // open, so returns kept happening in what looked like empty space.
+    const solo = this.state.config.players === 1;
     for (const side of [1, 2] as Side[]) {
-      const x = side === 1 ? this.courtX(HIT_ZONE / 2) : this.courtX(1 - HIT_ZONE / 2);
-      const player = session.players[side - 1];
-      const color = player ? Number(`0x${player.color.slice(1)}`) : 0x555f70;
-      this.rackets.set(side, this.add.rectangle(x, height / 2, 14, 90, color).setAlpha(0.9));
+      if (solo && side === 2) {
+        // A wall, because a wall is what actually returns the ball in practice.
+        // Drawing an opponent there is why it read as one who never swung.
+        this.add
+          .rectangle(this.courtX(1) + 10, (top + bottom) / 2, 20, bottom - top, 0x555f70)
+          .setAlpha(0.85);
+        continue;
+      }
+      const centre = side === 1 ? this.courtX(HIT_ZONE / 2) : this.courtX(1 - HIT_ZONE / 2);
+      const bandWidth = this.courtX(HIT_ZONE) - this.courtX(0);
+      const color = this.colorOf(side);
+
+      this.bands.set(
+        side,
+        this.add.rectangle(centre, (top + bottom) / 2, bandWidth, bottom - top, color).setAlpha(0.1),
+      );
+      this.rackets.set(
+        side,
+        this.add.rectangle(
+          side === 1 ? this.courtX(HIT_ZONE) : this.courtX(1 - HIT_ZONE),
+          height / 2,
+          12,
+          110,
+          color,
+        ),
+      );
+      this.add
+        .text(centre, top + 14, `P${side}`, {
+          fontFamily: 'system-ui, sans-serif',
+          fontSize: '30px',
+          color: session.players[side - 1]?.color ?? '#98a0b3',
+        })
+        .setOrigin(0.5, 0)
+        .setAlpha(0.75);
     }
 
     this.ball = this.add.circle(width / 2, height / 2, 12, 0xf1f3f8);
@@ -225,10 +290,21 @@ export class Tennis extends Phaser.Scene {
     return null;
   }
 
-  private showSwingFeedback(text: string, color: string): void {
+  private showSwingFeedback(text: string, color: string, side: Side): void {
+    // On the swinger's own half, so four people in a room can tell whose miss
+    // it was without guessing.
+    this.swingFeedback.setPosition(
+      this.courtX(side === 1 ? 0.16 : 0.84),
+      this.scale.height * 0.3,
+    );
     this.swingFeedback.setText(text).setColor(color).setAlpha(1);
     this.tweens.killTweensOf(this.swingFeedback);
     this.tweens.add({ targets: this.swingFeedback, alpha: 0, duration: 700, delay: 250 });
+  }
+
+  private colorOf(side: Side): number {
+    const player = session.players[side - 1];
+    return player ? Number(`0x${player.color.slice(1)}`) : 0x555f70;
   }
 
   private courtX(normalised: number): number {
@@ -248,25 +324,50 @@ export class Tennis extends Phaser.Scene {
 
     // Rackets track the ball vertically: the player swings, the game positions.
     for (const [side, racket] of this.rackets) {
-      const approaching =
-        side === 1 ? this.state.ball.vx <= 0 : this.state.ball.vx >= 0;
+      const approaching = side === 1 ? this.state.ball.vx <= 0 : this.state.ball.vx >= 0;
       const target = approaching ? this.courtY(this.state.ball.y) : this.courtY(0.5);
-      racket.setY(Phaser.Math.Linear(racket.y, target, 0.15));
+      // Frame-rate independent, so this does not chase twice as fast on a
+      // 120 Hz screen as it does on a 60 Hz one.
+      racket.setY(racket.y + (target - racket.y) * (1 - Math.exp(-9 * this.lastDelta)));
+
+      // The only cue in the game that says "now": the band brightens exactly
+      // while a swing on that side would connect.
+      const inZone =
+        this.state.phase === 'rally' &&
+        (side === 1
+          ? this.state.ball.vx < 0 && this.state.ball.x <= HIT_ZONE
+          : this.state.ball.vx > 0 && this.state.ball.x >= 1 - HIT_ZONE);
+      this.bands.get(side)?.setAlpha(inZone ? 0.24 : 0.1);
+      racket.setFillStyle(inZone ? 0xffffff : this.colorOf(side));
     }
 
     const [left, right] = this.state.score;
     this.scoreText.setText(
       this.state.config.players === 1
-        ? `랠리 ${this.state.rally}   실수 ${this.state.misses}/${this.state.config.missesAllowed}`
+        ? `랠리 ${this.state.rally}   최고 ${this.state.bestRally}   ` +
+          `실수 ${this.state.misses}/${this.state.config.missesAllowed}`
         : `${left} : ${right}`,
     );
 
-    this.phaseText.setText(this.phaseMessage());
-    this.rallyText.setText(
-      this.state.phase === 'gameover'
-        ? 'A 또는 ESC: 로비로'
-        : 'HOME: 로비   ·   공이 라켓 근처에 왔을 때 스윙',
+    this.phaseText.setText(
+      this.waiting ? '상대 폰 연결 대기 중…\n점수는 그대로입니다' : this.phaseMessage(),
     );
+    this.rallyText.setText(this.hint());
+  }
+
+  private hint(): string {
+    if (this.state.phase === 'gameover') return 'A 또는 ESC: 로비로 (8초 뒤 자동)';
+    // Everyone past the second phone is watching, and being told so beats
+    // swinging at a game that will never answer.
+    const side = this.mySides();
+    if (side === 'spectator') return '관전 중 — 테니스는 P1, P2만 칩니다';
+    if (this.state.rally >= 3) return `랠리 ${this.state.rally}`;
+    return 'HOME: 로비   ·   밴드가 밝아지면 휘두르기';
+  }
+
+  /** Whether anyone in the room is only watching. */
+  private mySides(): 'players' | 'spectator' {
+    return session.players.length > this.state.config.players ? 'spectator' : 'players';
   }
 
   private phaseMessage(): string {
@@ -277,7 +378,7 @@ export class Tennis extends Phaser.Scene {
         return this.state.config.players === 1 ? '아쉽다' : `P${this.state.lastPointTo ?? 1} 득점`;
       case 'gameover':
         return this.state.winner === null
-          ? `연습 종료 — 최고 랠리 ${this.state.rally}`
+          ? `연습 종료 — 최고 랠리 ${this.state.bestRally}`
           : `P${this.state.winner} 승리`;
       default:
         return '';

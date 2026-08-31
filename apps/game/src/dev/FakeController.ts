@@ -61,11 +61,46 @@ const SECONDARY: Keymap = {
   home: 'g',
 };
 
+/** Four keyboards, because four phones at once is the biggest untested claim here. */
+const THIRD: Keymap = {
+  left: 'j',
+  right: 'l',
+  up: 'i',
+  down: 'k',
+  swing: 'u',
+  a: 'o',
+  b: 'p',
+  trigger: ';',
+  home: "'",
+};
+
+const FOURTH: Keymap = {
+  left: '4',
+  right: '6',
+  up: '8',
+  down: '2',
+  swing: '5',
+  a: '7',
+  b: '9',
+  trigger: '1',
+  home: '3',
+};
+
 /** deg/s applied while a direction key is held. */
 const TURN_RATE = 90;
-/** Degrees of tilt reached at full deflection. */
-const TILT_RANGE = 40;
-const SWING_PEAK = 90;
+/**
+ * Full deflection has to reach the poses the games ask for: Freeze Frame calls
+ * for ninety and a hundred and eighty degrees, and at forty they were not
+ * reachable from a keyboard at all.
+ */
+const TILT_RANGE = 180;
+/**
+ * Swings are segmented on angular velocity, so a keyboard swing has to be one.
+ * It used to be modelled as acceleration alone, which after that change could
+ * never arm the detector — the keyboard could not swing, and nobody had played
+ * tennis without a phone since.
+ */
+const SWING_PEAK_RATE = 950;
 const SWING_FRAMES = 9;
 
 class FakePhone {
@@ -113,9 +148,14 @@ class FakePhone {
     this.pitch = clamp(this.pitch + vertical * 3 - Math.sign(this.pitch) * (vertical === 0 ? 2 : 0), TILT_RANGE);
 
     let acceleration = { x: 0, y: 0, z: 0 };
+    let swingYaw = 0;
+    let swingRoll = 0;
     if (this.swingFrame >= 0) {
       const shape = Math.sin((this.swingFrame / (SWING_FRAMES - 1)) * Math.PI);
-      acceleration = { x: 0, y: 0, z: -shape * SWING_PEAK };
+      // Sweeping right, mostly as yaw with a little roll, like a hand does.
+      swingYaw = -shape * SWING_PEAK_RATE;
+      swingRoll = -shape * SWING_PEAK_RATE * 0.2;
+      acceleration = { x: 0, y: 0, z: -shape * 60 };
       this.swingFrame = this.swingFrame >= SWING_FRAMES - 1 ? -1 : this.swingFrame + 1;
     }
 
@@ -128,15 +168,17 @@ class FakePhone {
       timestamp: now,
       // Built from the canonical landscape pose (ARCHITECTURE.md 5.7): alpha 90,
       // beta 0, gamma -90 reads as level and aiming straight ahead.
-      orientation: { alpha: 90, beta: this.roll, gamma: -90 - this.pitch },
+      // Portrait is the reference hold, so canonical axes are the device's own
+      // (ARCHITECTURE.md 5.1) and alpha/beta/gamma are the rates about x/y/z.
+      orientation: { alpha: 0, beta: 90 - this.pitch, gamma: this.roll },
       rotationRate: {
-        alpha: 0,
-        beta: -horizontal * TURN_RATE,
-        gamma: -vertical * TURN_RATE,
+        alpha: vertical * TURN_RATE,
+        beta: -horizontal * TURN_RATE + swingYaw,
+        gamma: swingRoll,
       },
       acceleration,
       buttons: this.buttons(),
-      screenOrientation: 1,
+      screenOrientation: 0,
       version: SENSOR_FRAME_VERSION,
       motionSeq: this.motionSeq,
       flags: SENSOR_FLAG.LINEAR_ACCEL | SENSOR_FLAG.ROTATION_RATE | SENSOR_FLAG.ORIENTATION,
@@ -149,7 +191,7 @@ function clamp(value: number, limit: number): number {
 }
 
 export function startFakeControllers(count: number): void {
-  const keymaps = [PRIMARY, SECONDARY].slice(0, Math.max(1, Math.min(2, count)));
+  const keymaps = [PRIMARY, SECONDARY, THIRD, FOURTH].slice(0, Math.max(1, Math.min(4, count)));
   const phones = keymaps.map((keys, index) => {
     const playerId = FAKE_ID_BASE + index;
     session.addLocalPlayer({
