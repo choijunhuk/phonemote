@@ -184,8 +184,11 @@ export class LobbyScene extends Phaser.Scene {
       const panel = this.add
         .rectangle(0, 0, tileWidth, tileHeight, 0x171b24)
         .setStrokeStyle(2, 0x2c3242);
+      // No number prefix on the tile. At three columns the title, the number
+      // and the player count did not fit on one line, and the number keys are
+      // still there — the hint line says so.
       const title = this.add
-        .text(-tileWidth / 2 + 18, -tileHeight / 2 + 10, `${index + 1}. ${game.title}`, {
+        .text(-tileWidth / 2 + 18, -tileHeight / 2 + 10, game.title, {
           fontFamily: 'system-ui, sans-serif',
           fontSize: '24px',
           color: '#f1f3f8',
@@ -202,16 +205,6 @@ export class LobbyScene extends Phaser.Scene {
           maxLines: 3,
         })
         .setOrigin(0, 0);
-      // Bottom right, beside the mode chip. At nine games the grid is three
-      // columns wide and a tile is 210px, where a title and a player count on
-      // the same line print over each other.
-      const players = this.add
-        .text(tileWidth / 2 - 18, tileHeight / 2 - 30, playersLabel(game), {
-          fontFamily: 'system-ui, sans-serif',
-          fontSize: '20px',
-          color: '#98a0b3',
-        })
-        .setOrigin(1, 0);
       // The mode line is the whole point of the redesign: it is where a player
       // sees that practice exists at all.
       const modeText = this.add
@@ -219,7 +212,9 @@ export class LobbyScene extends Phaser.Scene {
           fontFamily: 'system-ui, sans-serif',
           fontSize: '20px',
           color: '#2ed573',
-          wordWrap: { width: tileWidth - 110 },
+          // The whole tile width: the player count moved up to the title line,
+          // so a mode name like "드라이빙 레인지" has room to be itself.
+          wordWrap: { width: tileWidth - 36 },
           maxLines: 1,
         })
         .setOrigin(0, 0);
@@ -235,7 +230,7 @@ export class LobbyScene extends Phaser.Scene {
           0,
           game.modes.indexOf(defaultMode(game, session.presentPlayers.length)),
         ),
-        container: this.add.container(centre.x, centre.y, [panel, title, blurb, players, modeText]),
+        container: this.add.container(centre.x, centre.y, [panel, title, blurb, modeText]),
       };
     });
   }
@@ -357,8 +352,8 @@ export class LobbyScene extends Phaser.Scene {
     const mode = tile ? this.modeOf(tile) : undefined;
     const controls =
       session.players.length === 0
-        ? '폰을 연결하거나, 키보드 ↑↓←→ + Enter'
-        : '고르고 A로 시작   ·   ←→ 모드   ·   B 다음';
+        ? '폰을 연결하거나, 키보드 ↑↓←→ + Enter   ·   숫자키 1~9로 바로 시작'
+        : '고르고 A로 시작   ·   ←→ 모드   ·   B 다음   ·   숫자키 1~9';
     if (!tile || !mode) return controls;
 
     const why =
@@ -367,7 +362,10 @@ export class LobbyScene extends Phaser.Scene {
         : present > mode.maxPlayers
           ? `최대 ${mode.maxPlayers}명`
           : mode.detail;
-    return `${tile.game.title} · ${mode.title} — ${why}
+    // The player range lives here rather than on the tile: at three columns a
+    // title like "Together Table" already fills the line, and a count printed
+    // over the last letters of a name is worse than a count one line away.
+    return `${tile.game.title} · ${mode.title} (${playersLabel(tile.game)}) — ${why}
 ${controls}`;
   }
 

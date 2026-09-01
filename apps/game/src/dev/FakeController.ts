@@ -200,7 +200,7 @@ class FakePhone {
       // beta 0, gamma -90 reads as level and aiming straight ahead.
       // Portrait is the reference hold, so canonical axes are the device's own
       // (ARCHITECTURE.md 5.1) and alpha/beta/gamma are the rates about x/y/z.
-      orientation: { alpha: 0, beta: 90 - this.pitch, gamma: this.roll },
+      orientation: eulerFor(this.pitch, this.roll),
       rotationRate: {
         alpha: vertical * TURN_RATE + swingPitch,
         beta: -horizontal * TURN_RATE + swingYaw,
@@ -218,6 +218,44 @@ class FakePhone {
 
 function clamp(value: number, limit: number): number {
   return Math.min(limit, Math.max(-limit, value));
+}
+
+const DEG = Math.PI / 180;
+
+/**
+ * The device angles for a phone pitched and rolled by these amounts.
+ *
+ * Writing `beta = 90 - pitch, gamma = roll` looked right and was not: in this
+ * convention gravity in the phone's frame is a polar pair — beta is how far the
+ * phone is tilted away from vertical and gamma is which way that tilt points.
+ * At beta exactly 90, which is where a phone held straight up in portrait sits,
+ * `up` is (0, 1, 0) for every value of alpha and gamma. The stand-in's resting
+ * pose was therefore parked on the singularity, and no key could produce a
+ * sideways lean at all: measured, `up` did not move by a single float across a
+ * full 180 degrees of the roll key. Every lean game — the ski run, the shared
+ * table, bowling's stance, golf's address — was unplayable from the keyboard
+ * and untestable without a phone in the room.
+ *
+ * So build the attitude, then read the angles off it: pitch about the phone's
+ * own X, roll about its Z, and solve for the (beta, gamma) pair that puts
+ * gravity where those two rotations put it.
+ */
+function eulerFor(pitchDeg: number, rollDeg: number): { alpha: number; beta: number; gamma: number } {
+  const p = pitchDeg * DEG;
+  const r = rollDeg * DEG;
+  // Gravity-up in the phone's frame after pitching and then rolling.
+  const sideways = Math.cos(p) * Math.sin(r);
+  const forward = Math.sin(p);
+  const upward = Math.cos(p) * Math.cos(r);
+
+  const tilt = Math.atan2(Math.hypot(sideways, forward), upward);
+  const gamma = Math.atan2(sideways, forward);
+  return {
+    // Heading is unobservable here and no game reads it (ARCHITECTURE.md 5.7).
+    alpha: 0,
+    beta: 90 - tilt / DEG,
+    gamma: gamma / DEG,
+  };
 }
 
 export function startFakeControllers(count: number): void {

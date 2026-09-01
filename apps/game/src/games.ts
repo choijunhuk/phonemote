@@ -116,7 +116,7 @@ export const GAMES: readonly GameDefinition[] = [
   {
     key: 'statue-race',
     title: 'Statue Race',
-    blurb: '움직일 땐 마구, 멈출 땐 완전히 — 무궁화 꽃이 피었습니다',
+    blurb: '움직일 땐 마구, 멈출 땐 완전히',
     category: 'party',
     calibration: false,
     modes: [
@@ -223,7 +223,7 @@ export const GAMES: readonly GameDefinition[] = [
   {
     key: 'ski',
     title: 'Alpine Ski',
-    blurb: '폰을 좌우로 기울여 카빙한다 — 휘두르지 않는 유일한 종목',
+    blurb: '좌우로 기울여 카빙한다',
     category: 'sports',
     calibration: false,
     modes: [
@@ -256,7 +256,7 @@ export const GAMES: readonly GameDefinition[] = [
   {
     key: 'bowling',
     title: 'Bowling',
-    blurb: '손목으로 서는 자리를 잡고, 트리거를 놓는 순간 굴린다',
+    blurb: '자리를 잡고, 트리거를 놓는 순간 굴린다',
     category: 'sports',
     calibration: false,
     modes: [
@@ -289,7 +289,7 @@ export const GAMES: readonly GameDefinition[] = [
   {
     key: 'golf',
     title: 'Golf',
-    blurb: '드라이버는 1200°/s, 퍼팅은 10도 — 같은 폰으로 둘 다',
+    blurb: '드라이버는 1200°/s, 퍼팅은 10도',
     category: 'sports',
     calibration: false,
     modes: [
@@ -322,7 +322,7 @@ export const GAMES: readonly GameDefinition[] = [
   {
     key: 'freeze-frame',
     title: 'Freeze Frame',
-    blurb: '화면이 부르는 자세로 폰을 들고 버티기',
+    blurb: '화면이 부르는 자세로 버티기',
     category: 'party',
     calibration: false,
     modes: [
@@ -355,7 +355,7 @@ export const GAMES: readonly GameDefinition[] = [
   {
     key: 'tennis',
     title: 'Tennis',
-    blurb: '공이 라켓 근처에 왔을 때 폰을 휘두르기',
+    blurb: '공이 라켓 근처에 왔을 때 휘두르기',
     category: 'sports',
     calibration: false,
     modes: [
@@ -383,7 +383,7 @@ export const GAMES: readonly GameDefinition[] = [
   {
     key: 'pointer-test',
     title: 'Pointer Test',
-    blurb: '기울기와 자이로 포인터를 눈으로 확인하는 도구',
+    blurb: '기울기와 포인터를 눈으로 확인',
     category: 'tool',
     calibration: true,
     modes: [
