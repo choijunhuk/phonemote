@@ -992,7 +992,22 @@ function strike(state: GolfState, player: GolfPlayer, shot: StrikeInput): GolfEv
   const toPinY = pin.y - player.ball.y;
   const toPin = Math.hypot(toPinX, toPinY) || 1;
 
-  const startHeadingDeg = player.aimDeg + shot.faceDeg * FACE_START_SHARE * shot.spread;
+  /**
+   * Where the pin is from here, in the same degrees-from-+y the flight below
+   * integrates in.
+   *
+   * Aim is the player's offset from the line to the cup, which is only the same
+   * as an offset from +y while the ball is on the centre line. Measured from +y
+   * a ball four metres to the side of the cup is 80 degrees off it, and the
+   * fifteen degrees of roll a player has could never bring it back: the putt
+   * sets off up the field, finishes further away than it started, and the hole
+   * ends in the pick-up rule with the player having done nothing wrong. The
+   * ball is aimed at the cup and aimDeg moves it off that, which is the line
+   * lineErrorM and distanceErrorM are already measured against.
+   */
+  const bearingDeg = Math.atan2(toPinX, toPinY) / DEG;
+  const startHeadingDeg =
+    bearingDeg + player.aimDeg + shot.faceDeg * FACE_START_SHARE * shot.spread;
   const curveDegPerM =
     shot.kind === 'putt'
       ? hole.slopeDegPerM
@@ -1028,9 +1043,9 @@ function strike(state: GolfState, player: GolfPlayer, shot: StrikeInput): GolfEv
   player.flight =
     shot.kind === 'putt'
       ? {
-          // The heading a putt starts on is the aim and nothing else; the green
-          // does the rest, integrated metre by metre below.
-          headingDeg: player.aimDeg,
+          // The heading a putt starts on is the line to the cup and the aim on
+          // top of it; the green does the rest, integrated metre by metre below.
+          headingDeg: bearingDeg + player.aimDeg,
           speed: Math.sqrt(2 * PUTT_DECEL * Math.max(0, shot.carryM)),
           airborne: false,
           carryLeft: 0,
@@ -1284,7 +1299,21 @@ function passTurn(state: GolfState, player: GolfPlayer): GolfEvent[] {
     if (!other || other.holedOut || other.pickedUp || other.abandoned) return 1;
     return -distanceToPin(state, other);
   });
-  return applyTurnEvents(state, advance(state.order));
+  // Ranking a player who has finished last is not the same as skipping them:
+  // the order still stops where it stops, so with three players the seat after
+  // the one who just holed out is often another player who holed out, and the
+  // room then watches a sixty second shot clock run down on somebody who has
+  // nothing left to play. Bounded by the seat count because a hole where
+  // everybody is finished has nowhere to go, and closeHoleIfDone ends it.
+  let turnEvents = advance(state.order);
+  for (let step = 0; step < state.order.seats.length; step++) {
+    const next = currentPlayer(state.order);
+    if (next === null) break;
+    const waiting = findPlayer(state, next);
+    if (!waiting || !isDone(waiting)) break;
+    turnEvents = advance(state.order);
+  }
+  return applyTurnEvents(state, turnEvents);
 }
 
 function applyTurnEvents(state: GolfState, turnEvents: readonly TurnEvent[]): GolfEvent[] {

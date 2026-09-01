@@ -825,7 +825,17 @@ function tickGrip(
 
 function tickPairing(state: BowlingState, player: BowlingPlayer, nowMs: number): BowlingEvent[] {
   const held = player.backswing;
-  if (!held || nowMs - player.backswingAt < GIVE_UP_MS) return [];
+  if (!held) return [];
+  // The rule the shot clock already applies to an armed throw, applied to the
+  // other way a turn ends: a ball must not arrive on a lane that has moved on.
+  // A phone that drops between its backswing and its delivery has had the turn
+  // passed over it by setAbsent, and firing the held burst anyway writes a ball
+  // into a frame its owner never finished throwing.
+  if (!player.present) {
+    player.backswing = null;
+    return [];
+  }
+  if (nowMs - player.backswingAt < GIVE_UP_MS) return [];
   player.backswing = null;
   return startRoll(state, player, held, 'swing');
 }
@@ -849,7 +859,13 @@ function tickRoll(state: BowlingState, player: BowlingPlayer, dt: number): Bowli
     ball.x += ball.vx * ROLL_STEP;
 
     recordCrossings(player, before, ball);
-    if (steps % PATH_EVERY === 0) player.path.push({ x: ball.x, y: ball.y });
+    // Sampled by how far down the lane the ball has gone, not by how many steps
+    // this frame has taken: `steps` restarts every frame, so at 60 Hz it only
+    // ever reached 2 and the trail the practice screen overlays was the two ends
+    // of a straight line — which draws a hook as a diagonal.
+    if (ball.y >= player.path.length * PATH_EVERY * ROLL_STEP * ball.speed) {
+      player.path.push({ x: ball.x, y: ball.y });
+    }
 
     if (ball.x <= GUTTER_LEFT || ball.x >= GUTTER_RIGHT) {
       player.path.push({ x: ball.x, y: ball.y });
@@ -1174,7 +1190,13 @@ function nextBall(state: BowlingState, player: BowlingPlayer): BowlingEvent[] {
     player.pins = fullRack();
     player.phase = 'aim';
   }
-  if (state.turn) events.push(...fromTurn(state, advance(state.turn)));
+  // Only the player who holds the turn may hand it on. A phone that dropped
+  // while its ball was still rolling has already had the turn passed over it,
+  // and advancing again when that ball lands takes the turn off whoever has it
+  // now, before they have thrown.
+  if (state.turn && currentPlayer(state.turn) === player.id) {
+    events.push(...fromTurn(state, advance(state.turn)));
+  }
   return events;
 }
 

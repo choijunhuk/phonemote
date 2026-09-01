@@ -1,5 +1,11 @@
 import type Phaser from 'phaser';
+import { Archery } from './scenes/games/Archery.js';
+import { Bowling } from './scenes/games/Bowling.js';
 import { FreezeFrame } from './scenes/games/FreezeFrame.js';
+import { Golf } from './scenes/games/Golf.js';
+import { Ski } from './scenes/games/Ski.js';
+import { StatueRace } from './scenes/games/StatueRace.js';
+import { TogetherTable } from './scenes/games/TogetherTable.js';
 import { PointerTest } from './scenes/games/PointerTest.js';
 import { Tennis } from './scenes/games/Tennis.js';
 import { GAMES } from './games.js';
@@ -13,6 +19,12 @@ import { GAMES } from './games.js';
  */
 
 const SCENES: Readonly<Record<string, new () => Phaser.Scene>> = {
+  bowling: Bowling,
+  golf: Golf,
+  archery: Archery,
+  ski: Ski,
+  'statue-race': StatueRace,
+  'together-table': TogetherTable,
   'freeze-frame': FreezeFrame,
   tennis: Tennis,
   'pointer-test': PointerTest,
