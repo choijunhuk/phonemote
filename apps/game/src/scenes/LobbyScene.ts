@@ -170,7 +170,9 @@ export class LobbyScene extends Phaser.Scene {
       left: width * 0.46,
       right: 24,
       top: height * 0.16,
-      bottom: 72,
+      // Room for two lines of hint: the focused game's mode and its
+      // description sit on the first, the controls on the second.
+      bottom: 112,
     });
 
     this.tiles = GAMES.map((game, index) => {
@@ -185,20 +187,26 @@ export class LobbyScene extends Phaser.Scene {
       const title = this.add
         .text(-tileWidth / 2 + 18, -tileHeight / 2 + 10, `${index + 1}. ${game.title}`, {
           fontFamily: 'system-ui, sans-serif',
-          fontSize: '26px',
+          fontSize: '24px',
           color: '#f1f3f8',
         })
         .setOrigin(0, 0);
       const blurb = this.add
-        .text(-tileWidth / 2 + 18, -tileHeight / 2 + 42, game.blurb, {
+        .text(-tileWidth / 2 + 18, -tileHeight / 2 + 40, game.blurb, {
           fontFamily: 'system-ui, sans-serif',
           fontSize: '19px',
           color: '#98a0b3',
           wordWrap: { width: tileWidth - 36 },
+          // Three lines of a wrapped Korean sentence is as much as a 210px
+          // tile can hold before it runs into the mode chip.
+          maxLines: 3,
         })
         .setOrigin(0, 0);
+      // Bottom right, beside the mode chip. At nine games the grid is three
+      // columns wide and a tile is 210px, where a title and a player count on
+      // the same line print over each other.
       const players = this.add
-        .text(tileWidth / 2 - 18, -tileHeight / 2 + 12, playersLabel(game), {
+        .text(tileWidth / 2 - 18, tileHeight / 2 - 30, playersLabel(game), {
           fontFamily: 'system-ui, sans-serif',
           fontSize: '20px',
           color: '#98a0b3',
@@ -207,11 +215,12 @@ export class LobbyScene extends Phaser.Scene {
       // The mode line is the whole point of the redesign: it is where a player
       // sees that practice exists at all.
       const modeText = this.add
-        .text(-tileWidth / 2 + 18, tileHeight / 2 - 28, '', {
+        .text(-tileWidth / 2 + 18, tileHeight / 2 - 30, '', {
           fontFamily: 'system-ui, sans-serif',
           fontSize: '20px',
           color: '#2ed573',
-          wordWrap: { width: tileWidth - 36 },
+          wordWrap: { width: tileWidth - 110 },
+          maxLines: 1,
         })
         .setOrigin(0, 0);
 
@@ -330,23 +339,36 @@ export class LobbyScene extends Phaser.Scene {
       const short = present < mode.minPlayers;
       const many = present > mode.maxPlayers;
       const label = tile.game.modes.length > 1 ? `◀ ${mode.title} ▶` : mode.title;
+      // The chip carries the name only. At nine games a tile is 210px wide and
+      // a mode's description does not fit beside it; the description goes to
+      // the full-width line at the bottom, for whichever tile has focus.
       tile.modeText
-        .setText(
-          short
-            ? `${label} — ${mode.minPlayers}명 필요, 지금 ${present}명`
-            : many
-              ? `${label} — 최대 ${mode.maxPlayers}명`
-              : `${label} — ${mode.detail}`,
-        )
+        .setText(label)
         .setColor(short || many ? '#6f7994' : chosen ? '#2ed573' : '#98a0b3');
     });
 
     this.cursor.setVisible(players.length > 0);
-    this.hintText.setText(
-      players.length === 0
-        ? '폰을 연결하거나, 키보드 ↑↓←→ + Enter 로 바로 시작할 수 있습니다'
-        : '폰을 겨눠 고르고 A로 시작   ·   ←→ 모드 선택   ·   B 다음 항목   ·   Alt+R 축 측정',
-    );
+    this.hintText.setText(this.hint(present));
+  }
+
+  /** What the focused game's chosen mode is, then how to drive the menu. */
+  private hint(present: number): string {
+    const tile = this.tiles[this.selected];
+    const mode = tile ? this.modeOf(tile) : undefined;
+    const controls =
+      session.players.length === 0
+        ? '폰을 연결하거나, 키보드 ↑↓←→ + Enter'
+        : '고르고 A로 시작   ·   ←→ 모드   ·   B 다음';
+    if (!tile || !mode) return controls;
+
+    const why =
+      present < mode.minPlayers
+        ? `${mode.minPlayers}명 필요, 지금 ${present}명`
+        : present > mode.maxPlayers
+          ? `최대 ${mode.maxPlayers}명`
+          : mode.detail;
+    return `${tile.game.title} · ${mode.title} — ${why}
+${controls}`;
   }
 
   private async showQr(controllerUrl: string): Promise<void> {
