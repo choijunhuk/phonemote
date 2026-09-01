@@ -73,8 +73,8 @@ const BAR_Y = 412;
 const NAME_Y = 442;
 const END_Y = 476;
 const READING_Y = 506;
-const GRAPH_TOP = 596;
-const GRAPH_HEIGHT = 88;
+const GRAPH_TOP = 606;
+const GRAPH_HEIGHT = 56;
 
 /**
  * Slow motion for the aim replay.
@@ -522,27 +522,20 @@ export class Archery extends BaseGameScene {
       return `앙각 ${signed(archer.elevationDeg)}°`;
     }
 
+    // Four lanes on a 1280 screen leave a 320px column, which at 22px
+    // monospace is about twenty-two characters. Anything longer wraps, and the
+    // wrapped block ran through the shake graph and off the bottom — so the
+    // labels are short and each line is one measurement, not three.
     const live =
-      `앙각 ${signed(archer.elevationDeg)}°   흔들림 ${archer.wobble.toFixed(1)}°/s` +
-      ` (raw ${archer.rate.toFixed(1)})\n` +
-      `당김 ${Math.round(archer.draw * 100)}%   버팀 ${archer.holdSeconds.toFixed(1)}초   ` +
-      `그립 ${archer.gripQuality.toFixed(2)}`;
+      `앙각 ${signed(archer.elevationDeg)}°  흔들 ${archer.wobble.toFixed(1)}°/s
+` +
+      `당김 ${Math.round(archer.draw * 100)}%  버팀 ${archer.holdSeconds.toFixed(1)}초`;
 
-    if (!shot) return `${live}\n마지막 발 —\n첫 발을 쏘면 여기에 숫자가 남습니다`;
+    if (!shot) return `${live}
+첫 발을 쏘면 여기에`;
 
-    // A shot fired from a plain button edge carries no yaw integral, and
-    // printing 0.0° for a number nobody measured is exactly the lie this
-    // screen exists to prevent.
-    const windage = this.measuredWindage.has(archer.id)
-      ? `${signed(shot.windageDeg)}°`
-      : '측정 안 됨';
-    return (
-      `${live}\n` +
-      `마지막 ${shot.ring === 0 ? 'M' : `${shot.ring}점`} · 앙각 ${signed(shot.elevationDeg)}° · ` +
-      `좌우 ${windage}\n` +
-      `놓는 순간 ${shot.wobble.toFixed(1)}°/s · 홀드 평균 ${shot.meanWobble.toFixed(1)}°/s · ` +
-      `당김 ${Math.round(shot.draw * 100)}%`
-    );
+    return `${live}
+지난발 ${shot.ring === 0 ? 'M' : `${shot.ring}점`}  앙각 ${signed(shot.elevationDeg)}°`;
   }
 
   /**
@@ -617,7 +610,7 @@ export class Archery extends BaseGameScene {
     graph.strokeRect(left, GRAPH_TOP, lane.graphWidth, GRAPH_HEIGHT);
 
     if (trace.length === 0) {
-      lane.graphText.setText('당기면 흔들림 곡선이 그려집니다');
+      lane.graphText.setText('당기면 곡선이 그려집니다');
       return;
     }
 
@@ -656,9 +649,13 @@ export class Archery extends BaseGameScene {
       graph.lineBetween(xFor(headMs), GRAPH_TOP, xFor(headMs), bottom);
     }
 
+    // One line: anything taller here is drawn past the bottom of the canvas.
+    // One line: anything taller here is drawn past the bottom of the canvas.
+    // It carries what the compact block above had to leave out.
     lane.graphText.setText(
-      `|ω| 0–${peak.toFixed(0)}°/s · 0–${(spanMs / 1000).toFixed(1)}초` +
-        (shot ? `\n평균 ${shot.meanWobble.toFixed(1)}°/s (가로선) · 세로선이 놓은 지점` : ''),
+      shot
+        ? `평균 ${shot.meanWobble.toFixed(1)}  놓을때 ${shot.wobble.toFixed(1)}°/s`
+        : `|ω| 0–${peak.toFixed(0)}°/s`,
     );
   }
 

@@ -298,7 +298,7 @@ export class Tennis extends BaseGameScene {
     this.readingText = this.add
       .text(18, 46, '', {
         fontFamily: 'ui-monospace, monospace',
-        fontSize: '20px',
+        fontSize: '22px',
         color: '#98a0b3',
       })
       .setOrigin(0, 0)
