@@ -40,6 +40,9 @@ const GRIP_KEY = 'freezeFrameGrip';
 /** Practice stays wide: it is for learning the pose, not for being caught out. */
 const TOLERANCE_PRACTICE = 40;
 
+/** Above this the lives are not a count any more, they are "no limit". */
+const MAX_HEART_GLYPHS = 6;
+
 interface Card {
   readonly container: Phaser.GameObjects.Container;
   readonly nameText: Phaser.GameObjects.Text;
@@ -311,7 +314,11 @@ export class FreezeFrame extends BaseGameScene {
             ? `성공 +${player.lockPoints}`
             : `${player.offBy.toFixed(0)}°`;
       card.scoreText.setText(`${player.score}   ${detail}`);
-      card.heartText.setText('♥'.repeat(Math.max(0, player.hearts)));
+      // Practice gives out effectively unlimited lives, and repeating the
+      // glyph that many times draws a solid red bar across the card.
+      card.heartText.setText(
+        player.hearts > MAX_HEART_GLYPHS ? '연습' : '♥'.repeat(Math.max(0, player.hearts)),
+      );
       card.meter.setFillStyle(player.locked ? 0x2ed573 : Number(`0x${card.color.slice(1)}`));
       card.meter.setScale(player.locked ? 1 : player.closeness, 1);
       card.container.setAlpha(player.out ? 0.4 : 1);
