@@ -338,3 +338,47 @@ describe('how still the phone is being held', () => {
     expect(last.steadyMs).toBe(0);
   });
 });
+
+describe('the fastest moment of a delivery', () => {
+  it('reports the swing peak even when the thumb lifts after the arm has slowed', () => {
+    // The release instant alone rolled a hard swing let go just past its peak
+    // as a weak ball, which is why bowling did not feel like a swing
+    // (ARCHITECTURE.md D52).
+    const mapper = new InputMapper({ release: true });
+    const actions: GameAction[] = [];
+    actions.push(...mapper.update(raw({ timestamp: 0, buttons: BUTTON.TRIGGER })));
+    const profile = [150, 420, 900, 610, 240, 60];
+    profile.forEach((rate, index) => {
+      actions.push(
+        ...mapper.update(
+          raw({
+            timestamp: (index + 1) * 50,
+            buttons: BUTTON.TRIGGER,
+            rotationRate: { alpha: rate, beta: 0, gamma: 0 },
+          }),
+        ),
+      );
+    });
+    actions.push(...mapper.update(raw({ timestamp: 350, buttons: 0 })));
+
+    const release = actions.find((action) => action.kind === 'release');
+    if (release?.kind !== 'release') throw new Error('no release');
+    expect(release.rate).toBeLessThan(100);
+    expect(release.peakRate).toBeGreaterThan(850);
+    // The 900 deg/s frame was stamped 150 ms; the release came at 350.
+    expect(release.peakAgoMs).toBeCloseTo(200, 0);
+  });
+
+  it('carries the unsmoothed rate every frame, for a meter that follows the arm', () => {
+    const mapper = new InputMapper({ stillness: true });
+    mapper.update(raw({ timestamp: 0 }));
+    const actions = mapper.update(
+      raw({ timestamp: 50, rotationRate: { alpha: 700, beta: 0, gamma: 0 } }),
+    );
+    const reading = actions.find((action) => action.kind === 'stillness');
+    if (reading?.kind !== 'stillness') throw new Error('no stillness');
+    // The smoothed rate lags by its 300 ms time constant; the raw one does not.
+    expect(reading.rawRate).toBeGreaterThan(650);
+    expect(reading.rate).toBeLessThan(reading.rawRate);
+  });
+});

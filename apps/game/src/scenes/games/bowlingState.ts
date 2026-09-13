@@ -381,6 +381,10 @@ export interface BowlingPlayer {
   /** The unpaired burst waiting to become a delivery, and when it arrived. */
   backswing: Burst | null;
   backswingAt: number;
+  /** |omega| right now, deg/s, for the power meter that follows the arm. */
+  swingRate: number;
+  /** Fastest |omega| since the trigger went down, deg/s. */
+  swingPeak: number;
 }
 
 export interface BowlingState {
@@ -484,6 +488,8 @@ function newPlayer(state: BowlingState, id: number, present: boolean): BowlingPl
     drillAttempts: 0,
     backswing: null,
     backswingAt: 0,
+    swingRate: 0,
+    swingPeak: 0,
   };
 }
 
@@ -597,11 +603,23 @@ export function readPose(
 export function readStillness(
   state: BowlingState,
   id: number,
-  reading: { readonly still: boolean; readonly steadyMs: number; readonly stalled: boolean },
+  reading: {
+    readonly still: boolean;
+    readonly steadyMs: number;
+    readonly stalled: boolean;
+    readonly rawRate?: number;
+  },
   nowMs: number,
 ): BowlingEvent[] {
   const player = findPlayer(state, id);
-  if (!player || player.phase !== 'grip' || reading.stalled) return [];
+  if (!player) return [];
+  // The live swing, in every phase: a meter that only moved once the ball was
+  // gone would be the same silence the player complained about.
+  if (reading.rawRate !== undefined && !reading.stalled) {
+    player.swingRate = reading.rawRate;
+    if (player.phase === 'armed') player.swingPeak = Math.max(player.swingPeak, reading.rawRate);
+  }
+  if (player.phase !== 'grip' || reading.stalled) return [];
   if (!reading.still || reading.steadyMs < state.config.gripSteadyMs) return [];
   return takeGrip(state, player, true, nowMs);
 }
@@ -654,6 +672,7 @@ export function pressTrigger(state: BowlingState, id: number): BowlingEvent[] {
   if (!player || player.phase !== 'aim' || !canThrow(state, id)) return [];
   lockAim(player);
   player.phase = 'armed';
+  player.swingPeak = 0;
   return [{ kind: 'armed', playerId: player.id }];
 }
 
@@ -669,10 +688,41 @@ export function release(
   id: number,
   rate: number,
   rotation: CanonicalAngles,
+  peak: DeliveryPeak | null = null,
 ): BowlingEvent[] {
   const player = findPlayer(state, id);
   if (!player || player.phase !== 'armed' || !canThrow(state, id)) return [];
-  return startRoll(state, player, { rate, rotation }, 'release');
+  return startRoll(state, player, { rate: deliveryRate(rate, peak), rotation }, 'release');
+}
+
+/** The fastest moment of the swing while the trigger was held. */
+export interface DeliveryPeak {
+  readonly rate: number;
+  /** How long before the release it happened, ms. */
+  readonly agoMs: number;
+}
+
+/**
+ * How recent a peak still counts as the delivery, ms.
+ *
+ * The forward swing from its fastest point to the thumb coming off the button
+ * takes a few hundred milliseconds, and at the 20 Hz the recordings show the
+ * peak itself is only known 50 to 102 ms after it happened. A peak older than
+ * this was the backswing, while the player hesitated at the top, and rolling
+ * the ball at that speed would reward a pause rather than a throw.
+ */
+export const DELIVERY_WINDOW_MS = 450;
+
+/**
+ * The speed a delivery should roll at.
+ *
+ * The rate at the release instant alone made a hard swing let go a moment past
+ * its peak roll as a weak ball: the arm had already slowed. So the swing's
+ * peak wins whenever it belongs to this delivery (ARCHITECTURE.md D52).
+ */
+export function deliveryRate(rate: number, peak: DeliveryPeak | null): number {
+  if (!peak || peak.agoMs > DELIVERY_WINDOW_MS) return rate;
+  return Math.max(rate, peak.rate);
 }
 
 /**
@@ -766,6 +816,7 @@ function startRoll(
   player.crossings = [];
   player.accumulator = 0;
   player.backswing = null;
+  player.swingPeak = 0;
   player.phase = 'roll';
   // The shot clock is per ball, not per frame: a frame is two balls and a
   // player who has just rolled one is plainly still there.

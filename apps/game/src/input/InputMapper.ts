@@ -79,7 +79,15 @@ interface PlayerState {
   bias: GyroBias;
   calibrationPending: boolean;
   /** Set while the trigger is held, for the release action. */
-  trigger: { at: number; yaw: number; pitch: number; roll: number } | null;
+  trigger: {
+    at: number;
+    yaw: number;
+    pitch: number;
+    roll: number;
+    /** Fastest |omega| while held, and when, for the delivery's real speed. */
+    peak: number;
+    peakAt: number;
+  } | null;
 }
 
 export class InputMapper {
@@ -221,7 +229,14 @@ export class InputMapper {
 
       if (name === 'TRIGGER' && this.config.release === true) {
         if (isDown) {
-          state.trigger = { at: frame.timestamp, yaw: 0, pitch: 0, roll: 0 };
+          state.trigger = {
+            at: frame.timestamp,
+            yaw: 0,
+            pitch: 0,
+            roll: 0,
+            peak: 0,
+            peakAt: frame.timestamp,
+          };
         } else if (state.trigger) {
           // The motion under way at the instant the ball left the hand. A
           // bowling delivery may never cross the swing threshold at all — one
@@ -242,6 +257,8 @@ export class InputMapper {
               : 0,
             rotation: { yaw: held.yaw, pitch: held.pitch, roll: held.roll },
             heldMs: Math.max(0, frame.timestamp - held.at),
+            peakRate: held.peak,
+            peakAgoMs: Math.max(0, frame.timestamp - held.peakAt),
           });
           state.trigger = null;
         }
@@ -288,6 +305,17 @@ export class InputMapper {
       state.trigger.yaw += step.yaw * canonical.dt;
       state.trigger.pitch += step.pitch * canonical.dt;
       state.trigger.roll += step.roll * canonical.dt;
+      // The delivery's real speed is its fastest moment, not whatever the arm
+      // was doing on the frame the thumb came off the button (ARCHITECTURE.md D52).
+      const rateNow = Math.hypot(
+        canonical.angularVelocity.yaw,
+        canonical.angularVelocity.pitch,
+        canonical.angularVelocity.roll,
+      );
+      if (rateNow > state.trigger.peak) {
+        state.trigger.peak = rateNow;
+        state.trigger.peakAt = canonical.timestamp;
+      }
     }
 
     if (state.stillness) {
@@ -296,6 +324,11 @@ export class InputMapper {
         kind: 'stillness',
         playerId: canonical.playerId,
         rate: reading.rate,
+        rawRate: Math.hypot(
+          canonical.angularVelocity.yaw,
+          canonical.angularVelocity.pitch,
+          canonical.angularVelocity.roll,
+        ),
         still: reading.still,
         steadyMs: reading.steadyMs,
         // A phone that stopped sending is not a phone being held still, and

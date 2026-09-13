@@ -147,6 +147,16 @@ export type GameAction =
       rotation: CanonicalAngles;
       /** How long the trigger was held, ms. */
       heldMs: number;
+      /**
+       * The fastest |omega| seen while the trigger was held, deg/s.
+       *
+       * The rate at the release instant alone made a hard swing let go a moment
+       * past its peak roll as a weak ball, which is why bowling did not feel
+       * like a swing (ARCHITECTURE.md D52).
+       */
+      peakRate: number;
+      /** How long before the release that peak happened, ms. */
+      peakAgoMs: number;
     }
   /**
    * How still this phone is being held, and for how long.
@@ -161,6 +171,14 @@ export type GameAction =
       playerId: number;
       /** Smoothed |omega|, deg/s. */
       rate: number;
+      /**
+       * |omega| this frame, unsmoothed, deg/s.
+       *
+       * The smoothed rate lags a swing by its 300 ms time constant and reads a
+       * 150 ms burst at well under half its height, so a meter that follows
+       * the arm has to read this one.
+       */
+      rawRate: number;
       still: boolean;
       steadyMs: number;
       stalled: boolean;

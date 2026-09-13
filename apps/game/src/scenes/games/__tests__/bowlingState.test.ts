@@ -31,6 +31,8 @@ import {
   type BowlingEvent,
   type BowlingPlayer,
   type BowlingState,
+  DELIVERY_WINDOW_MS,
+  deliveryRate,
 } from '../bowlingState.js';
 
 /**
@@ -933,5 +935,54 @@ describe('a frame rate that is never the same twice', () => {
 
     untilSettled(state, 1);
     expect(player(state, 1).frames[0]).toEqual([10]);
+  });
+});
+
+describe('the speed a swing rolls at', () => {
+  it('rolls at the peak of the swing, not at the rate on the frame the thumb lifted', () => {
+    // A real throw felt limp because a hard swing let go a moment past its peak
+    // rolled at the slower rate of that last frame (ARCHITECTURE.md D52).
+    expect(deliveryRate(120, { rate: 900, agoMs: 150 })).toBe(900);
+    expect(speedFor(deliveryRate(120, { rate: 900, agoMs: 150 }))).toBeGreaterThan(speedFor(120));
+  });
+
+  it('ignores a peak from a backswing the player then hesitated after', () => {
+    expect(deliveryRate(300, { rate: 900, agoMs: DELIVERY_WINDOW_MS + 1 })).toBe(300);
+  });
+
+  it('keeps the release rate when it is already the fastest thing that happened', () => {
+    expect(deliveryRate(640, null)).toBe(640);
+    expect(deliveryRate(640, { rate: 200, agoMs: 50 })).toBe(640);
+  });
+
+  it('does not call a hard swing weak because the thumb was a little late', () => {
+    const state = createBowling('practice', [1]);
+    gripAll(state);
+    pressTrigger(state, 1);
+    release(state, 1, 60, { yaw: 0, pitch: -40, roll: 0 }, { rate: 880, agoMs: 120 });
+
+    const thrown = findPlayer(state, 1)?.lastThrow;
+    expect(thrown?.rate).toBe(880);
+    expect(thrown?.weak).toBe(false);
+  });
+
+  it('follows the arm while the trigger is held and keeps its fastest point', () => {
+    const state = createBowling('practice', [1]);
+    gripAll(state);
+    pressTrigger(state, 1);
+    for (const rawRate of [180, 640, 910, 420]) {
+      readStillness(state, 1, { still: false, steadyMs: 0, stalled: false, rawRate }, clockMs);
+    }
+    const player = findPlayer(state, 1);
+    expect(player?.swingRate).toBe(420);
+    expect(player?.swingPeak).toBe(910);
+  });
+
+  it('does not let a stalled phone move the meter', () => {
+    const state = createBowling('practice', [1]);
+    gripAll(state);
+    pressTrigger(state, 1);
+    readStillness(state, 1, { still: false, steadyMs: 0, stalled: true, rawRate: 999 }, clockMs);
+    expect(findPlayer(state, 1)?.swingPeak).toBe(0);
   });
 });

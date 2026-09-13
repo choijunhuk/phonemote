@@ -30,6 +30,8 @@ import {
   type BowlingPlayer,
   type BowlingState,
   type Trace,
+  HARD_RATE,
+  SOFT_RATE,
 } from './bowlingState.js';
 
 /**
@@ -170,7 +172,12 @@ export class Bowling extends BaseGameScene {
         this.play(readStillness(this.state, action.playerId, action, this.time.now));
         return;
       case 'release':
-        this.play(release(this.state, action.playerId, action.rate, action.rotation));
+        this.play(
+          release(this.state, action.playerId, action.rate, action.rotation, {
+            rate: action.peakRate,
+            agoMs: action.peakAgoMs,
+          }),
+        );
         return;
       case 'swing':
         // The fallback for a player who never touches the trigger. The pairing
@@ -522,6 +529,7 @@ export class Bowling extends BaseGameScene {
 
     lane.marks.clear();
     this.drawStance(player, lane, perUnit);
+    this.drawMeter(player, lane);
     // Newest first, so the freshest throw is the brightest line on the lane.
     player.traces.forEach((trace, index) => {
       const alpha = Math.max(0.18, 0.85 - index * 0.16);
@@ -534,6 +542,46 @@ export class Bowling extends BaseGameScene {
     lane.statusText.setText(this.laneStatus(player, onTurn));
     if (this.state.config.diagnostics) lane.readingText.setText(this.readingBlock(player));
     else lane.scoreText.setText(`합계 ${player.score}`);
+  }
+
+  /**
+   * The swing, while it happens.
+   *
+   * Between pulling the trigger and the ball leaving, nothing on the lane used to
+   * move, so a hard swing and a limp one looked identical until it was too late
+   * to change either — the "it does not feel like a swing" a real throw reported.
+   * The bar follows the arm live and the white tick holds its fastest point,
+   * which is the speed the ball will roll at (ARCHITECTURE.md D52). After the
+   * release the bar stays at the speed that was used.
+   */
+  private drawMeter(player: BowlingPlayer, lane: Lane): void {
+    const armed = player.phase === 'armed';
+    const rolled = player.phase === 'roll' && player.lastThrow !== null;
+    if (!armed && !rolled) return;
+
+    const span = HARD_RATE - SOFT_RATE;
+    const level = (rate: number): number => Math.min(1, Math.max(0, (rate - SOFT_RATE) / span));
+    const height = lane.height * 0.4;
+    const x = lane.width / 2 - 22;
+    const bottom = -16;
+
+    lane.marks.fillStyle(0x0f1116, 0.85);
+    lane.marks.fillRect(x - 10, bottom - height, 20, height);
+
+    const fill = armed ? level(player.swingRate) : level(player.lastThrow?.rate ?? 0);
+    // Not colour alone: the height is the reading, and the colour only marks
+    // the top of the scale.
+    lane.marks.fillStyle(fill > 0.85 ? 0x2ed573 : lane.color, 1);
+    lane.marks.fillRect(x - 10, bottom - height * fill, 20, height * fill);
+
+    if (armed && player.swingPeak > 0) {
+      const peakY = bottom - height * level(player.swingPeak);
+      lane.marks.lineStyle(4, 0xf1f3f8, 1);
+      lane.marks.beginPath();
+      lane.marks.moveTo(x - 16, peakY);
+      lane.marks.lineTo(x + 16, peakY);
+      lane.marks.strokePath();
+    }
   }
 
   /** Where this player is standing, and the straight line out of that stance. */
@@ -696,7 +744,7 @@ export class Bowling extends BaseGameScene {
       case 'aim':
         return `P${player.id} 조준 — 트리거를 당겨 백스윙`;
       case 'armed':
-        return `P${player.id} 백스윙 — 굴리면서 트리거를 놓기`;
+        return `P${player.id} 팔을 뒤로 → 앞으로 휘두르며 트리거 놓기`;
       case 'roll':
         return `P${player.id} 굴러가는 중`;
       case 'pins':
