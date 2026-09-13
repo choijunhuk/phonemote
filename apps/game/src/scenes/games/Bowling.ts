@@ -164,7 +164,7 @@ export class Bowling extends BaseGameScene {
       case 'pose':
         // Gravity, not angles: the stance is read off `up` so that a phone held
         // near vertical does not swing the reading by 1/cos(pitch).
-        readPose(this.state, action.playerId, action.up);
+        readPose(this.state, action.playerId, action.up, this.time.now);
         return;
       case 'stillness':
         this.play(readStillness(this.state, action.playerId, action, this.time.now));

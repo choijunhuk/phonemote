@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalPose } from '../SensorNormalizer.js';
-import { captureGrip, gripQuality, signedPitch, signedRoll, tiltVector } from '../grip.js';
+import { captureGrip, gripQuality, signedPitch, signedRoll, tiltVector,
+  GRIP_WINDOW_MS,
+  gripPoses,
+  pushGripSample,
+  type GripSample,
+} from '../grip.js';
 import {
   FLAT_GRIP_DEG,
   POSES,
@@ -319,5 +324,58 @@ describe('grip quality', () => {
         expect(quality, `beta ${beta} gamma ${gamma}`).toBeLessThanOrEqual(1);
       }
     }
+  });
+});
+
+describe('the window a grip is averaged over', () => {
+  /** Feed a steady pose at a given rate, then a changed one, and capture. */
+  function windowAt(hz: number, seconds: number): GripSample[] {
+    const buffer: GripSample[] = [];
+    const step = 1000 / hz;
+    for (let t = 0; t < seconds * 1000; t += step) {
+      pushGripSample(buffer, { x: 0, y: 1, z: 0 }, t);
+    }
+    return buffer;
+  }
+
+  it('holds the same amount of time whatever the phone sends at', () => {
+    // The bug this replaced kept a fixed number of samples, so a window that
+    // was half a second at 60 Hz was two seconds at 15 and a third of a second
+    // at 100 — and the phone's real rate is unknown (ARCHITECTURE.md 11.2).
+    for (const hz of [15, 20, 60, 100]) {
+      const buffer = windowAt(hz, 3);
+      const first = buffer[0];
+      const last = buffer[buffer.length - 1];
+      const span = (last?.at ?? 0) - (first?.at ?? 0);
+      expect(span, `${hz} Hz`).toBeLessThanOrEqual(GRIP_WINDOW_MS);
+      expect(span, `${hz} Hz`).toBeGreaterThan(GRIP_WINDOW_MS - 2 * (1000 / hz));
+    }
+  });
+
+  it('forgets the hold a player had before they shifted it', () => {
+    // The failure a player would feel: shift your hold, press A, and get a zero
+    // that is part of where you used to be holding it.
+    for (const hz of [15, 100]) {
+      const buffer: GripSample[] = [];
+      const step = 1000 / hz;
+      let t = 0;
+      // Two seconds of the old hold, then a second of the new one.
+      for (; t < 2000; t += step) pushGripSample(buffer, upFor(0, -90), t);
+      const shifted = rotateAbout(upFor(0, -90), { x: 0, y: 0, z: -1 }, 30);
+      for (; t < 3000; t += step) pushGripSample(buffer, shifted, t);
+
+      const grip = captureGrip(gripPoses(buffer), t);
+      expect(angleBetweenDeg(grip.up, shifted), `${hz} Hz`).toBeLessThan(2);
+    }
+  });
+
+  it('still takes a grip from the one reading a phone has just sent', () => {
+    // A phone coming back from a stall has exactly one sample. Refusing to grip
+    // at all would leave the player pressing a button that does nothing.
+    const buffer: GripSample[] = [];
+    pushGripSample(buffer, LEVEL_GRIP.up, 0);
+    pushGripSample(buffer, LEVEL_GRIP.up, 9000);
+    expect(buffer).toHaveLength(1);
+    expect(captureGrip(gripPoses(buffer), 9000).up.y).toBeCloseTo(LEVEL_GRIP.up.y, 5);
   });
 });

@@ -1,4 +1,4 @@
-import { captureGrip, gripQuality, signedRoll } from '../../input/grip.js';
+import { captureGrip, gripPoses, gripQuality, pushGripSample, signedRoll, type GripSample } from '../../input/grip.js';
 import type { Grip } from '../../input/grip.js';
 import type { CanonicalVector } from '../../input/types.js';
 
@@ -100,7 +100,7 @@ export interface Racer {
   present: boolean;
   grip: Grip | null;
   /** Recent gravity readings, averaged into a grip on demand. */
-  recent: CanonicalVector[];
+  recent: GripSample[];
   lastPoseAt: number;
   /** What the input layer last said about this phone having stopped. */
   stalledReport: boolean;
@@ -257,9 +257,6 @@ const POSE_FRESH_MS = 300;
 /** Ghost sample rate, Hz. 20 is the poll rate the recordings were taken at. */
 const GHOST_HZ = 20;
 const GHOST_EVERY = Math.round(1 / (GHOST_HZ * SIM_STEP));
-
-/** Readings kept for a grip: half a second at any rate that matters. */
-const GRIP_SAMPLES = 24;
 
 /**
  * The drift alarm. An edge this far over, held this long without once coming
@@ -530,8 +527,7 @@ export function readPose(state: SkiState, id: number, up: CanonicalVector, nowMs
 
   racer.lastPoseAt = nowMs;
   racer.stalledReport = false;
-  racer.recent.push(up);
-  if (racer.recent.length > GRIP_SAMPLES) racer.recent.shift();
+  pushGripSample(racer.recent, up, nowMs);
 
   const grip = racer.grip;
   if (!grip) return;
@@ -574,7 +570,7 @@ export function regrip(state: SkiState, id: number, nowMs: number): boolean {
   const racer = findRacer(state, id);
   if (!racer || racer.recent.length === 0) return false;
 
-  racer.grip = captureGrip(racer.recent, nowMs);
+  racer.grip = captureGrip(gripPoses(racer.recent), nowMs);
   racer.gripPower = gripQuality(racer.grip.up);
   racer.edgeDeg = 0;
   racer.edge = 0;

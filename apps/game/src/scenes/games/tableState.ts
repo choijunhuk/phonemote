@@ -1,4 +1,4 @@
-import { captureGrip, gripQuality, tiltVector, type Grip } from '../../input/grip.js';
+import { captureGrip, gripPoses, gripQuality, pushGripSample, tiltVector, type Grip, type GripSample } from '../../input/grip.js';
 import type { CanonicalVector } from '../../input/types.js';
 import { assignSeats, playerAt } from './seats.js';
 
@@ -127,7 +127,7 @@ export interface TablePlayer {
   /** Continuous stillness reported by the input layer, ms. */
   steadyMs: number;
   /** Recent `up` readings, averaged into a grip when the hand settles. */
-  samples: CanonicalVector[];
+  samples: GripSample[];
   /** Versus: goals into this player's own hole. */
   goals: number;
   /** Drill accumulators: degrees squared, weighted by the time they lasted. */
@@ -245,9 +245,6 @@ const RIM_SPEED = 0.15;
  * because it happened to be turning around.
  */
 export const GRIP_STILL_MS = 400;
-
-/** About half a second of readings, the window captureGrip is built for. */
-const GRIP_SAMPLES = 30;
 
 /** Nobody stares at a setup screen because a phone never reported still. */
 export const AUTO_GRIP_SECONDS = 6;
@@ -611,8 +608,7 @@ export function readPose(
 
   const gapMs = player.lastFrameAt > 0 ? nowMs - player.lastFrameAt : 0;
   player.lastFrameAt = nowMs;
-  player.samples.push(up);
-  if (player.samples.length > GRIP_SAMPLES) player.samples.shift();
+  pushGripSample(player.samples, up, nowMs);
 
   const grip = player.grip;
   if (!grip) return;
@@ -800,7 +796,7 @@ function updateHands(state: TableState, dt: number, nowMs: number): TableEvent[]
 }
 
 function takeGrip(player: TablePlayer, nowMs: number): void {
-  const grip = captureGrip(player.samples, nowMs);
+  const grip = captureGrip(gripPoses(player.samples), nowMs);
   player.grip = grip;
   player.quality = gripQuality(grip.up);
   player.tilt = { x: 0, y: 0 };

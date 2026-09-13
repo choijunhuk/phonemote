@@ -86,6 +86,53 @@ export interface Grip {
  * An empty window has no grip in it and gives the level fallback, which is what
  * normalise does with a zero vector too.
  */
+/**
+ * How much of the recent past a grip is averaged over.
+ *
+ * Half a second, and measured in time rather than in frames. Every game that
+ * takes a grip used to keep a fixed number of samples — thirty, or
+ * twenty-four — which is half a second only if the phone happens to send at
+ * 60 Hz. The phone's real rate is unknown and varies: at 15 Hz those thirty
+ * samples are two seconds of history, so a player who shifted their hold just
+ * before pressing A had the pose from before the shift averaged in, and the
+ * zero they got depended on their phone rather than on their hand
+ * (ARCHITECTURE.md 11.2).
+ */
+export const GRIP_WINDOW_MS = 500;
+
+/** A pose reading and when the phone took it. */
+export interface GripSample {
+  readonly up: CanonicalVector;
+  readonly at: number;
+}
+
+/**
+ * Add a reading and drop whatever has aged out of the window.
+ *
+ * Always keeps the newest sample, however long the gap before it: a phone that
+ * has just come back from a stall has one reading and one reading is what the
+ * grip has to be built from, which is better than refusing to take a grip at
+ * all.
+ */
+export function pushGripSample(
+  buffer: GripSample[],
+  up: CanonicalVector,
+  at: number,
+  windowMs: number = GRIP_WINDOW_MS,
+): void {
+  buffer.push({ up, at });
+  while (buffer.length > 1) {
+    const oldest = buffer[0];
+    if (oldest === undefined || at - oldest.at <= windowMs) break;
+    buffer.shift();
+  }
+}
+
+/** The poses out of a sample window, newest last, for captureGrip. */
+export function gripPoses(buffer: readonly GripSample[]): CanonicalVector[] {
+  return buffer.map((sample) => sample.up);
+}
+
 export function captureGrip(samples: readonly CanonicalVector[], at: number): Grip {
   const newest = samples[samples.length - 1];
   if (!newest) return { up: LEVEL, capturedAt: at };

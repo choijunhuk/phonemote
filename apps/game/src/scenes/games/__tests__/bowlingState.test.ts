@@ -83,7 +83,11 @@ function bowling(
 function gripAll(state: BowlingState, up: CanonicalVector = GRIP): BowlingEvent[] {
   const events: BowlingEvent[] = [];
   for (const seated of state.players) {
-    for (let i = 0; i < 30; i++) readPose(state, seated.id, up);
+    // Spread across the half-second window the grip actually averages over.
+    for (let i = 0; i < 30; i++) {
+      clockMs += 1000 / 60;
+      readPose(state, seated.id, up, clockMs);
+    }
     events.push(
       ...readStillness(state, seated.id, { still: true, steadyMs: 500, stalled: false }, clockMs),
     );
@@ -152,7 +156,7 @@ function untilSettled(state: BowlingState, id: number, frame = FRAME): BowlingEv
 /** Aim, press, let go, and wait for the rack. */
 function bowl(state: BowlingState, id: number, shot: Shot, frame = FRAME): BowlingEvent[] {
   const events: BowlingEvent[] = [];
-  readPose(state, id, rolled(shot.aim ?? 0));
+  readPose(state, id, rolled(shot.aim ?? 0), clockMs);
   events.push(...pressTrigger(state, id));
   events.push(...release(state, id, shot.rate, angles(shot)));
   events.push(...untilSettled(state, id, frame));
@@ -180,7 +184,7 @@ function onTurn(state: BowlingState): number | null {
 describe('taking a grip', () => {
   it('waits for the hand to settle before adopting one', () => {
     const state = bowling('solo');
-    for (let i = 0; i < 30; i++) readPose(state, 1, GRIP);
+    for (let i = 0; i < 30; i++) { clockMs += 1000 / 60; readPose(state, 1, GRIP, clockMs); }
     // Under the 400 ms the config asks for, so nothing is adopted yet.
     expect(readStillness(state, 1, { still: true, steadyMs: 300, stalled: false }, clockMs)).toEqual(
       [],
@@ -196,7 +200,7 @@ describe('taking a grip', () => {
     // A stalled stream reads perfectly steady and is not being held at all;
     // taking it would fix the whole game to a pose nobody chose.
     const state = bowling('solo');
-    for (let i = 0; i < 30; i++) readPose(state, 1, GRIP);
+    for (let i = 0; i < 30; i++) { clockMs += 1000 / 60; readPose(state, 1, GRIP, clockMs); }
     expect(readStillness(state, 1, { still: true, steadyMs: 900, stalled: true }, clockMs)).toEqual(
       [],
     );
@@ -205,7 +209,7 @@ describe('taking a grip', () => {
 
   it('refuses a phone held flat, once, and says whose it is', () => {
     const state = bowling('solo');
-    for (let i = 0; i < 30; i++) readPose(state, 1, FLAT);
+    for (let i = 0; i < 30; i++) { clockMs += 1000 / 60; readPose(state, 1, FLAT, clockMs); }
     expect(readStillness(state, 1, { still: true, steadyMs: 500, stalled: false }, clockMs)).toEqual(
       [{ kind: 'grip_refused', playerId: 1 }],
     );
@@ -221,7 +225,7 @@ describe('taking a grip', () => {
     // Nobody is left in front of a screen that will not proceed, however badly
     // they are holding the phone.
     const state = bowling('solo');
-    for (let i = 0; i < 30; i++) readPose(state, 1, FLAT);
+    for (let i = 0; i < 30; i++) { clockMs += 1000 / 60; readPose(state, 1, FLAT, clockMs); }
     readStillness(state, 1, { still: true, steadyMs: 500, stalled: false }, clockMs);
 
     // Seven seconds of a grip nobody is going to fix, then the eighth.
@@ -237,7 +241,7 @@ describe('taking a grip', () => {
 
   it('does not run the patience clock on a phone that is not answering', () => {
     const state = bowling('solo');
-    for (let i = 0; i < 30; i++) readPose(state, 1, FLAT);
+    for (let i = 0; i < 30; i++) { clockMs += 1000 / 60; readPose(state, 1, FLAT, clockMs); }
     syncPlayers(state, [{ id: 1, present: false }]);
     run(state, 12);
     expect(player(state, 1).phase).toBe('grip');
@@ -253,24 +257,24 @@ describe('where the player stands', () => {
     // A hand trying to hold still reads 3.3 deg/s and wanders a degree or two.
     // Without the deadzone that wander is 0.035 of a lane, half a pin spacing.
     const state = ready('solo');
-    readPose(state, 1, rolled(2));
+    readPose(state, 1, rolled(2), clockMs);
     expect(player(state, 1).standX).toBeCloseTo(0.5, 6);
-    readPose(state, 1, rolled(-2));
+    readPose(state, 1, rolled(-2), clockMs);
     expect(player(state, 1).standX).toBeCloseTo(0.5, 6);
 
     // Past it the feet move smoothly, not in the jump a hard deadzone makes:
     // eleven degrees is halfway to the edge of the approach.
-    readPose(state, 1, rolled(11));
+    readPose(state, 1, rolled(11), clockMs);
     expect(player(state, 1).standX).toBeCloseTo(0.675, 6);
   });
 
   it('reaches the edge of the approach at full wrist and goes no further', () => {
     const state = ready('solo');
-    readPose(state, 1, rolled(20));
+    readPose(state, 1, rolled(20), clockMs);
     expect(player(state, 1).standX).toBeCloseTo(0.85, 6);
-    readPose(state, 1, rolled(35));
+    readPose(state, 1, rolled(35), clockMs);
     expect(player(state, 1).standX).toBeCloseTo(0.85, 6);
-    readPose(state, 1, rolled(-20));
+    readPose(state, 1, rolled(-20), clockMs);
     expect(player(state, 1).standX).toBeCloseTo(0.15, 6);
   });
 
@@ -278,10 +282,10 @@ describe('where the player stands', () => {
     // The wrist turns through a delivery. If that also moved the stance, every
     // hook would drag the player sideways off the mark they had chosen.
     const state = ready('solo');
-    readPose(state, 1, rolled(0));
+    readPose(state, 1, rolled(0), clockMs);
     expect(pressTrigger(state, 1).map((event) => event.kind)).toEqual(['armed']);
 
-    readPose(state, 1, rolled(18));
+    readPose(state, 1, rolled(18), clockMs);
     expect(player(state, 1).aimDeg).toBeCloseTo(18, 3);
     expect(player(state, 1).standX).toBeCloseTo(0.5, 6);
 
@@ -360,7 +364,7 @@ describe('a player who never touches the trigger', () => {
     // Taking the first burst would roll the ball backwards at the speed of a
     // windup.
     const state = ready('solo');
-    readPose(state, 1, rolled(0));
+    readPose(state, 1, rolled(0), clockMs);
     expect(readSwing(state, 1, 400, { yaw: 0, pitch: -100, roll: 0 }, clockMs)).toEqual([]);
 
     clockMs += 600;
@@ -374,7 +378,7 @@ describe('a player who never touches the trigger', () => {
   it('still pairs a delivery a full second after its backswing', () => {
     // An arm that goes back slowly is one delivery, not two unrelated bursts.
     const state = ready('solo');
-    readPose(state, 1, rolled(0));
+    readPose(state, 1, rolled(0), clockMs);
     readSwing(state, 1, 400, { yaw: 0, pitch: -100, roll: 0 }, clockMs);
 
     clockMs += 1000;
@@ -384,7 +388,7 @@ describe('a player who never touches the trigger', () => {
 
   it('does not pair a burst with one that was something else entirely', () => {
     const state = ready('solo');
-    readPose(state, 1, rolled(0));
+    readPose(state, 1, rolled(0), clockMs);
     readSwing(state, 1, 400, { yaw: 0, pitch: -100, roll: 0 }, clockMs);
 
     // 1250 ms later, which is past the window a delivery follows its backswing in.
@@ -395,7 +399,7 @@ describe('a player who never touches the trigger', () => {
 
   it('rolls a half swing that never came back rather than swallowing it', () => {
     const state = ready('solo');
-    readPose(state, 1, rolled(0));
+    readPose(state, 1, rolled(0), clockMs);
     readSwing(state, 1, 700, angles(POCKET), clockMs);
 
     run(state, 1.3);
@@ -428,7 +432,7 @@ describe('the pins', () => {
 
   it('leaves the pins down long enough to be seen before the next ball', () => {
     const state = ready('solo');
-    readPose(state, 1, rolled(0));
+    readPose(state, 1, rolled(0), clockMs);
     pressTrigger(state, 1);
     release(state, 1, 700, angles(POCKET));
 
@@ -587,7 +591,7 @@ describe('taking turns', () => {
 
   it('will not let anybody else arm a throw', () => {
     const state = ready('versus', [1, 2]);
-    readPose(state, 2, rolled(0));
+    readPose(state, 2, rolled(0), clockMs);
     expect(pressTrigger(state, 2)).toEqual([]);
     expect(release(state, 2, 700, angles(POCKET))).toEqual([]);
     expect(canThrow(state, 2)).toBe(false);
@@ -635,7 +639,7 @@ describe('taking turns', () => {
     // An expired turn is usually a phone put down. Coming back to a card
     // somebody else's inattention had written on is worse than losing the turn.
     const state = ready('versus', [1, 2], { turnSeconds: 5 });
-    readPose(state, 1, rolled(0));
+    readPose(state, 1, rolled(0), clockMs);
     pressTrigger(state, 1);
     expect(player(state, 1).phase).toBe('armed');
 
@@ -687,7 +691,7 @@ describe('a phone that drops out mid-game', () => {
     // them, and their ball landing must not pass it on a second time — P2 lost a
     // whole frame to a ball somebody else had thrown before they dropped.
     const state = ready('versus', [1, 2, 3]);
-    readPose(state, 1, rolled(0));
+    readPose(state, 1, rolled(0), clockMs);
     pressTrigger(state, 1);
     release(state, 1, 700, angles(POCKET));
 
@@ -705,7 +709,7 @@ describe('a phone that drops out mid-game', () => {
 
   it('does not roll a ball for a phone that left between backswing and delivery', () => {
     const state = ready('versus', [1, 2]);
-    readPose(state, 1, rolled(0));
+    readPose(state, 1, rolled(0), clockMs);
     readSwing(state, 1, 700, angles(POCKET), clockMs);
 
     syncPlayers(state, [
@@ -917,7 +921,7 @@ describe('a frame rate that is never the same twice', () => {
     // would put the ball past the pins without its line ever having crossed a
     // row of them.
     const state = ready('solo');
-    readPose(state, 1, rolled(0));
+    readPose(state, 1, rolled(0), clockMs);
     pressTrigger(state, 1);
     release(state, 1, 700, angles(POCKET));
 

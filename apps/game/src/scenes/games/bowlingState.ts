@@ -1,4 +1,4 @@
-import { captureGrip, gripQuality, signedRoll, type Grip } from '../../input/grip.js';
+import { captureGrip, gripPoses, gripQuality, pushGripSample, signedRoll, type Grip, type GripSample } from '../../input/grip.js';
 import { isFlatGrip } from '../../input/pose.js';
 import type { CanonicalAngles, CanonicalVector } from '../../input/types.js';
 import { assignSeats, seatOf } from './seats.js';
@@ -350,7 +350,7 @@ export interface BowlingPlayer {
   gripQuality: number;
   gripWait: number;
   /** Recent `up` readings, averaged into a grip once the hand settles. */
-  recent: CanonicalVector[];
+  recent: GripSample[];
   /** A flat grip has been refused and not yet corrected; do not nag twice. */
   flatRefused: boolean;
   phase: BowlingPlayerPhase;
@@ -567,13 +567,16 @@ export function canThrow(state: BowlingState, id: number): boolean {
  * A gravity reading: kept for the grip capture, and read as aim once there is
  * a grip to read it against.
  */
-export function readPose(state: BowlingState, id: number, up: CanonicalVector): void {
+export function readPose(
+  state: BowlingState,
+  id: number,
+  up: CanonicalVector,
+  nowMs: number,
+): void {
   const player = findPlayer(state, id);
   if (!player) return;
 
-  player.recent.push(up);
-  // Half a second at 60 Hz, which is what captureGrip's rejection window wants.
-  if (player.recent.length > 30) player.recent.shift();
+  pushGripSample(player.recent, up, nowMs);
 
   if (player.flatRefused && !isFlatGrip(up)) player.flatRefused = false;
   if (!player.grip) return;
@@ -620,7 +623,7 @@ function takeGrip(
   nowMs: number,
 ): BowlingEvent[] {
   if (player.recent.length === 0) return [];
-  const grip = captureGrip(player.recent, nowMs);
+  const grip = captureGrip(gripPoses(player.recent), nowMs);
 
   if (refusable && isFlatGrip(grip.up)) {
     if (player.flatRefused) return [];

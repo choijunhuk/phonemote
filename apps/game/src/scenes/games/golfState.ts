@@ -1,4 +1,4 @@
-import { captureGrip, signedRoll } from '../../input/grip.js';
+import { captureGrip, gripPoses, pushGripSample, signedRoll, type GripSample } from '../../input/grip.js';
 import type { Grip } from '../../input/grip.js';
 import type { CanonicalAngles, CanonicalVector } from '../../input/types.js';
 import { assignSeats } from './seats.js';
@@ -289,9 +289,6 @@ const BACKSWING_LIFE_S = 3;
 
 /** Milliseconds of stillness that count as a settled grip, from the design. */
 const GRIP_STEADY_MS = 400;
-/** Half a second of `up`, which is what captureGrip wants to average over. */
-const GRIP_SAMPLES = 30;
-
 /** The band the stroke detector works in; the live backstroke bar reads it. */
 const STROKE_MIN_RATE = 40;
 /** A hand trying to hold still reads 3.3 deg/s, max 14. */
@@ -386,7 +383,7 @@ export interface GolfPlayer {
   /** False while this phone is not answering. Kept, never deleted (D48). */
   present: boolean;
   grip: Grip | null;
-  recent: CanonicalVector[];
+  recent: GripSample[];
   aimDeg: number;
   /** Smoothed |omega| from the stillness channel, deg/s. */
   rate: number;
@@ -703,8 +700,7 @@ export function readPose(state: GolfState, id: number, up: CanonicalVector, nowM
   const player = findPlayer(state, id);
   if (!player) return;
   player.lastPoseAt = nowMs;
-  player.recent.push(up);
-  if (player.recent.length > GRIP_SAMPLES) player.recent.shift();
+  pushGripSample(player.recent, up, nowMs);
   if (!player.grip) return;
   player.aimDeg = clamp(signedRoll(player.grip, up) * AIM_GAIN, -AIM_LIMIT_DEG, AIM_LIMIT_DEG);
 }
@@ -734,7 +730,7 @@ export function readStillness(
 export function setGrip(state: GolfState, id: number, atMs: number): GolfEvent[] {
   const player = findPlayer(state, id);
   if (!player || player.recent.length === 0) return [];
-  player.grip = captureGrip(player.recent, atMs);
+  player.grip = captureGrip(gripPoses(player.recent), atMs);
   player.aimDeg = 0;
   return [{ kind: 'grip', playerId: id }];
 }
