@@ -562,11 +562,18 @@ export class Bowling extends BaseGameScene {
     const span = HARD_RATE - SOFT_RATE;
     const level = (rate: number): number => Math.min(1, Math.max(0, (rate - SOFT_RATE) / span));
     const height = lane.height * 0.4;
-    const x = lane.width / 2 - 22;
+    // Just outside the lane's right border, inside the 30 px the column leaves
+    // each side. Drawn on the lane it sat on the right gutter in the same dark
+    // colour, so an empty or low bar was invisible and the peak tick read as a
+    // mark on the lane.
+    const x = lane.width / 2 + 20;
     const bottom = -16;
 
-    lane.marks.fillStyle(0x0f1116, 0.85);
+    lane.marks.fillStyle(0x0f1116, 1);
     lane.marks.fillRect(x - 10, bottom - height, 20, height);
+    // Outlined so the scale is visible before the arm has moved at all.
+    lane.marks.lineStyle(2, 0x98a0b3, 0.8);
+    lane.marks.strokeRect(x - 10, bottom - height, 20, height);
 
     const fill = armed ? level(player.swingRate) : level(player.lastThrow?.rate ?? 0);
     // Not colour alone: the height is the reading, and the colour only marks
