@@ -18,7 +18,15 @@ import { session } from '../session.js';
 /** Recorded either side of the moment the player says "now". */
 const BEFORE_MS = 1000;
 const AFTER_MS = 1000;
-const SAMPLE_EVERY_MS = 50;
+/**
+ * How often the recorder looks at the latest frame.
+ *
+ * This is a polling interval, not the phone's rate: a sample is only new if a
+ * frame arrived since the last look. Samples that repeat a frame already seen
+ * are dropped, so what lands in a trace is the phone's own cadence rather than
+ * this one — which is what makes a promoted trace usable for timing at all.
+ */
+const SAMPLE_EVERY_MS = 10;
 
 interface Step {
   readonly key: string;
@@ -137,12 +145,27 @@ export class AxisRecorder {
     this.element.innerHTML = html;
   }
 
+  /** The last frame written, per player, so a repeat is not recorded twice. */
+  private readonly lastStamp = new Map<number, number>();
+
   private samplePlayer(playerId: number): Sample | null {
     const info = session.debugInfo(playerId);
     if (!info.raw || !info.canonical) return null;
     const { raw, canonical } = info;
+    // Polling runs faster than the phone sends, so most looks find the frame
+    // already recorded. Writing it again would fabricate a cadence.
+    if (this.lastStamp.get(playerId) === raw.timestamp) return null;
+    this.lastStamp.set(playerId, raw.timestamp);
     return {
-      t: performance.now(),
+      // The phone's own clock, not this machine's.
+      //
+      // Stamping with performance.now() made every promoted trace claim the
+      // recorder's 20 Hz polling cadence rather than the phone's real one, so
+      // the corpus could not answer the one question that matters most for
+      // every timing constant in the system: how fast does the phone actually
+      // send? It also silently inserted the wifi's jitter into what was
+      // recorded as sensor timing (ARCHITECTURE.md 11.2).
+      t: raw.timestamp,
       raw: {
         alpha: raw.orientation.alpha,
         beta: raw.orientation.beta,
