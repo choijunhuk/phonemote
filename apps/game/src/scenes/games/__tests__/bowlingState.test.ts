@@ -362,14 +362,11 @@ describe('letting the ball go', () => {
 });
 
 describe('a player who never touches the trigger', () => {
-  it('rolls on the delivery, not on the backswing that came first', () => {
-    // Taking the first burst would roll the ball backwards at the speed of a
-    // windup.
+  it('rolls on the swing itself, the moment it is seen', () => {
+    // Mimed with a phone a delivery is one scoop forward and up. Holding that as
+    // a backswing rolled the arm coming back down instead (ARCHITECTURE.md D53).
     const state = ready('solo');
     readPose(state, 1, rolled(0), clockMs);
-    expect(readSwing(state, 1, 400, { yaw: 0, pitch: -100, roll: 0 }, clockMs)).toEqual([]);
-
-    clockMs += 600;
     const events = readSwing(state, 1, 700, angles(POCKET), clockMs);
     expect(events.map((event) => event.kind)).toEqual(['released']);
     untilSettled(state, 1);
@@ -377,39 +374,22 @@ describe('a player who never touches the trigger', () => {
     expect(player(state, 1).lastThrow?.rate).toBe(700);
   });
 
-  it('still pairs a delivery a full second after its backswing', () => {
-    // An arm that goes back slowly is one delivery, not two unrelated bursts.
-    const state = ready('solo');
-    readPose(state, 1, rolled(0), clockMs);
-    readSwing(state, 1, 400, { yaw: 0, pitch: -100, roll: 0 }, clockMs);
-
-    clockMs += 1000;
-    const events = readSwing(state, 1, 700, angles(POCKET), clockMs);
-    expect(events.map((event) => event.kind)).toEqual(['released']);
-  });
-
-  it('does not pair a burst with one that was something else entirely', () => {
-    const state = ready('solo');
-    readPose(state, 1, rolled(0), clockMs);
-    readSwing(state, 1, 400, { yaw: 0, pitch: -100, roll: 0 }, clockMs);
-
-    // 1250 ms later, which is past the window a delivery follows its backswing in.
-    clockMs += 1250;
-    expect(readSwing(state, 1, 700, angles(POCKET), clockMs)).toEqual([]);
-    expect(player(state, 1).phase).toBe('aim');
-  });
-
-  it('rolls a half swing that never came back rather than swallowing it', () => {
+  it('does not throw a second ball when the arm comes back down', () => {
     const state = ready('solo');
     readPose(state, 1, rolled(0), clockMs);
     readSwing(state, 1, 700, angles(POCKET), clockMs);
 
-    run(state, 1.3);
-    expect(player(state, 1).phase).toBe('aim');
-    run(state, 0.4);
+    clockMs += 400;
+    expect(readSwing(state, 1, 520, { yaw: 0, pitch: 100, roll: 0 }, clockMs)).toEqual([]);
     expect(player(state, 1).phase).toBe('roll');
-    untilSettled(state, 1);
-    expect(player(state, 1).frames[0]).toEqual([10]);
+  });
+
+  it('starts the ball from where the player was standing when the arm moved', () => {
+    const state = ready('solo');
+    readPose(state, 1, rolled(11), clockMs);
+    const standing = player(state, 1).standX;
+    readSwing(state, 1, 700, angles(POCKET), clockMs);
+    expect(player(state, 1).lockedStandX).toBe(standing);
   });
 });
 
@@ -709,18 +689,16 @@ describe('a phone that drops out mid-game', () => {
     expect(player(state, 1).frames).toEqual([[10], []]);
   });
 
-  it('does not roll a ball for a phone that left between backswing and delivery', () => {
+  it('does not let a phone that has left throw a ball into the frame', () => {
     const state = ready('versus', [1, 2]);
     readPose(state, 1, rolled(0), clockMs);
-    readSwing(state, 1, 700, angles(POCKET), clockMs);
-
     syncPlayers(state, [
       { id: 1, present: false },
       { id: 2, present: true },
     ]);
-    run(state, 2.3);
 
-    expect(player(state, 1).phase).toBe('aim');
+    expect(readSwing(state, 1, 700, angles(POCKET), clockMs)).toEqual([]);
+    run(state, 2.3);
     expect(player(state, 1).frames).toEqual([[]]);
     expect(onTurn(state)).toBe(2);
   });

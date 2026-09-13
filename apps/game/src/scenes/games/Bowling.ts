@@ -180,8 +180,8 @@ export class Bowling extends BaseGameScene {
         );
         return;
       case 'swing':
-        // The fallback for a player who never touches the trigger. The pairing
-        // of backswing and delivery is the module's rule, not this scene's.
+        // A player who never touches the trigger: the swing itself is the throw,
+        // and deciding that is the module's rule, not this scene's.
         this.play(
           readSwing(this.state, action.playerId, action.peakRate, action.rotation, this.time.now),
         );
@@ -721,7 +721,7 @@ export class Bowling extends BaseGameScene {
       .filter((player) => player.phase !== 'done')
       .map((player) => this.phaseTag(player));
     if (busy.length === 0) return '연습 종료 — 12초 뒤 로비';
-    return `${busy.join('  ·  ')}   ·   트리거를 놓는 순간 굴러갑니다`;
+    return `${busy.join('  ·  ')}   ·   휘둘러 올리거나 트리거를 놓으면 굴러갑니다`;
   }
 
   /** The same states in one or two words, for the line that lists every lane. */
@@ -733,7 +733,7 @@ export class Bowling extends BaseGameScene {
       case 'aim':
         return `P${player.id} 조준`;
       case 'armed':
-        return `P${player.id} 백스윙`;
+        return `P${player.id} 스윙 중`;
       case 'roll':
         return `P${player.id} 굴러감`;
       case 'pins':
@@ -749,9 +749,9 @@ export class Bowling extends BaseGameScene {
       case 'grip':
         return `P${player.id} 그립 대기`;
       case 'aim':
-        return `P${player.id} 조준 — 트리거를 당겨 백스윙`;
+        return `P${player.id} 조준 — 휘둘러 올리면 굴러감`;
       case 'armed':
-        return `P${player.id} 팔을 뒤로 → 앞으로 휘두르며 트리거 놓기`;
+        return `P${player.id} 스윙 중 — 휘둘러 올리며 트리거 놓기`;
       case 'roll':
         return `P${player.id} 굴러가는 중`;
       case 'pins':

@@ -378,9 +378,6 @@ export interface BowlingPlayer {
   drill: number;
   drillClears: number;
   drillAttempts: number;
-  /** The unpaired burst waiting to become a delivery, and when it arrived. */
-  backswing: Burst | null;
-  backswingAt: number;
   /** |omega| right now, deg/s, for the power meter that follows the arm. */
   swingRate: number;
   /** Fastest |omega| since the trigger went down, deg/s. */
@@ -486,8 +483,6 @@ function newPlayer(state: BowlingState, id: number, present: boolean): BowlingPl
     drill: 0,
     drillClears: 0,
     drillAttempts: 0,
-    backswing: null,
-    backswingAt: 0,
     swingRate: 0,
     swingPeak: 0,
   };
@@ -551,7 +546,6 @@ function fromTurn(state: BowlingState, turnEvents: readonly TurnEvent[]): Bowlin
     const player = findPlayer(state, event.playerId);
     if (player && (player.phase === 'armed' || player.phase === 'aim')) {
       player.phase = 'aim';
-      player.backswing = null;
     }
     events.push({ kind: 'timed_out', playerId: event.playerId });
   }
@@ -666,7 +660,7 @@ export function standXFor(aimDeg: number): number {
   return STAND_MIN + STAND_SPAN * ((past / span + 1) / 2);
 }
 
-/** The trigger going down: the aim is locked and the backswing may begin. */
+/** The trigger going down: the aim is locked and the swing may begin. */
 export function pressTrigger(state: BowlingState, id: number): BowlingEvent[] {
   const player = findPlayer(state, id);
   if (!player || player.phase !== 'aim' || !canThrow(state, id)) return [];
@@ -726,19 +720,18 @@ export function deliveryRate(rate: number, peak: DeliveryPeak | null): number {
 }
 
 /**
- * The fallback for a player who never touches the trigger.
+ * A throw from a player who never touches the trigger: the swing is the throw.
  *
- * A delivery is two bursts: the arm going back, then the arm coming through.
- * The detector fires on both and the backswing arrives first, so taking the
- * first burst would roll the ball backwards at the speed of a windup. The first
- * burst is therefore held, and the next one inside PAIR_MS is the delivery. If
- * no second burst arrives, GIVE_UP_MS rolls the held one rather than swallowing
- * the shot — a half swing that never reversed is still a throw the player made.
+ * This used to hold the first burst as a backswing and roll the next one inside
+ * 1.2 s, on the model of an arm going back and then coming through. Mimed with a
+ * phone, a bowling delivery is one motion — the arm scooping forward and up — so
+ * that model held the real throw and rolled whatever came next, which was the
+ * arm coming back down: "swing it up and the ball does not go; lower it and it
+ * does" (ARCHITECTURE.md D53). The swing detector fires as the burst's rate falls
+ * away from its peak, so the ball leaves near the top of the scoop.
  *
- * The design put this in an input/StrokeGate.ts. It lives here instead because
- * this file may not import anything the human has not wired yet, and because
- * the pairing is a rule about what counts as a throw, which is exactly what
- * this module is for. The scene feeds it swing events; nothing else changes.
+ * A back-then-forward delivery, the way the Wii did it, belongs to the trigger:
+ * hold it through the swing and let go, and nothing here is involved.
  */
 export function readSwing(
   state: BowlingState,
@@ -747,28 +740,15 @@ export function readSwing(
   rotation: CanonicalAngles,
   nowMs: number,
 ): BowlingEvent[] {
+  // Kept in the signature so the scene's call does not change; the throw no
+  // longer depends on when the previous burst arrived.
+  void nowMs;
   const player = findPlayer(state, id);
   if (!player || player.phase !== 'aim' || !canThrow(state, id)) return [];
-
-  const held = player.backswing;
-  if (held && nowMs - player.backswingAt <= PAIR_MS) {
-    player.backswing = null;
-    return startRoll(state, player, { rate: peakRate, rotation }, 'swing');
-  }
-
-  // Either the first burst of a delivery or one so late that the burst before
-  // it was something else entirely. Both mean: this is the backswing now.
-  player.backswing = { rate: peakRate, rotation };
-  player.backswingAt = nowMs;
-  // The feet stop moving when the arm starts, exactly as the trigger would.
+  // The feet stop where they were when the arm moved, exactly as the trigger does.
   lockAim(player);
-  return [];
+  return startRoll(state, player, { rate: peakRate, rotation }, 'swing');
 }
-
-/** How long after a backswing a burst still counts as the delivery. */
-export const PAIR_MS = 1200;
-/** After this, a held backswing is rolled rather than thrown away. */
-export const GIVE_UP_MS = 1500;
 
 export function speedFor(rate: number): number {
   const normalised = Math.min(1, Math.max(0, (rate - SOFT_RATE) / (HARD_RATE - SOFT_RATE)));
@@ -815,7 +795,6 @@ function startRoll(
   player.path = [{ x: player.lockedStandX, y: 0 }];
   player.crossings = [];
   player.accumulator = 0;
-  player.backswing = null;
   player.swingPeak = 0;
   player.phase = 'roll';
   // The shot clock is per ball, not per frame: a frame is two balls and a
@@ -841,10 +820,6 @@ export function stepBowling(state: BowlingState, dt: number, nowMs: number): Bow
   for (const player of state.players) {
     if (player.phase === 'grip') {
       events.push(...tickGrip(state, player, dt, nowMs));
-      continue;
-    }
-    if (player.phase === 'aim') {
-      events.push(...tickPairing(state, player, nowMs));
       continue;
     }
     if (player.phase === 'roll') {
@@ -875,23 +850,6 @@ function tickGrip(
   if (player.gripWait < state.config.autoGripSeconds) return [];
   // Out of patience, so the flat grip is taken rather than refused again.
   return takeGrip(state, player, false, nowMs);
-}
-
-function tickPairing(state: BowlingState, player: BowlingPlayer, nowMs: number): BowlingEvent[] {
-  const held = player.backswing;
-  if (!held) return [];
-  // The rule the shot clock already applies to an armed throw, applied to the
-  // other way a turn ends: a ball must not arrive on a lane that has moved on.
-  // A phone that drops between its backswing and its delivery has had the turn
-  // passed over it by setAbsent, and firing the held burst anyway writes a ball
-  // into a frame its owner never finished throwing.
-  if (!player.present) {
-    player.backswing = null;
-    return [];
-  }
-  if (nowMs - player.backswingAt < GIVE_UP_MS) return [];
-  player.backswing = null;
-  return startRoll(state, player, held, 'swing');
 }
 
 function tickRoll(state: BowlingState, player: BowlingPlayer, dt: number): BowlingEvent[] {
