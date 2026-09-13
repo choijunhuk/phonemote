@@ -11,6 +11,25 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cert_dir="$repo_root/certs"
 
+# winget puts its command shims in %LOCALAPPDATA%\Microsoft\WinGet\Links, which
+# Windows shells see but the bash pnpm spawns for this script often does not:
+# mkcert was installed and working, and this script still said it was missing.
+# Look there before giving up.
+if ! command -v mkcert >/dev/null 2>&1; then
+  # POSIX paths only. A Windows-style path with a drive letter put on PATH is
+  # split at that drive colon, leaving a stray entry that only works by luck.
+  local_appdata="$HOME/AppData/Local"
+  if [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1; then
+    local_appdata="$(cygpath -u "$LOCALAPPDATA")"
+  fi
+  for dir in "$local_appdata/Microsoft/WinGet/Links" "$HOME/AppData/Local/Microsoft/WinGet/Links"; do
+    if [ -x "$dir/mkcert.exe" ]; then
+      PATH="$dir:$PATH"
+      break
+    fi
+  done
+fi
+
 if ! command -v mkcert >/dev/null 2>&1; then
   cat >&2 <<'MSG'
 mkcert is not on PATH.
