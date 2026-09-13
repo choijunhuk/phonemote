@@ -387,11 +387,12 @@ export class Golf extends BaseGameScene {
       return;
     }
     if (button === 'B') {
-      // A no-op outside practice: setDrill refuses a drill this mode does not
-      // offer, so there is no branch here to keep in step with the rules.
       const before = this.state.drill;
       setDrill(this.state, before === 'range' ? 'putting' : 'range');
-      if (this.state.drill === before) return;
+      if (this.state.drill === before) {
+        this.note(playerId, '연습에서만 전환');
+        return;
+      }
       sfx.tick();
       session.log(`연습 화면 ${this.state.drill === 'range' ? '레인지' : '퍼팅 그린'}`);
       return;
@@ -905,8 +906,9 @@ export class Golf extends BaseGameScene {
 
     if (this.state.drill === 'putting') {
       const band = puttBand(this.state, player);
-      const holed = player.shots.filter((shot) => shot.holed).length;
-      const last = player.lastShot;
+      const putts = player.shots.filter((shot) => shot.kind === 'putt');
+      const holed = putts.filter((shot) => shot.holed).length;
+      const last = putts[putts.length - 1];
       return [
         live,
         `사다리 ${player.ladder + 1}/3 · ${holeFor(this.state, player).lengthM.toFixed(0)}m`,
@@ -920,7 +922,7 @@ export class Golf extends BaseGameScene {
         last && last.distanceErrorM !== null
           ? `거리 ${signed(last.distanceErrorM, 2)}m 좌우 ${signed(last.lineErrorM, 2)}m`
           : '거리·좌우 오차 대기',
-        `넣음 ${holed} / ${player.shots.length}퍼트`,
+        `최근 ${putts.length}퍼트 · 넣음 ${holed}`,
       ];
     }
 

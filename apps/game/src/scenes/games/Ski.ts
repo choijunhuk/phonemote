@@ -306,6 +306,16 @@ export class Ski extends BaseGameScene {
 
   /** A is the re-zero, and after a run it is another run. */
   private pressButton(playerId: number, button: string): void {
+    if (button === 'B' && this.state.config.timed) {
+      this.gateText
+        .setText('시간 경기 중에는 드릴 전환 불가')
+        .setColor(WARN)
+        .setPosition(this.view.x + this.view.w / 2, this.view.y + this.view.h * 0.45)
+        .setAlpha(1);
+      this.tweens.killTweensOf(this.gateText);
+      this.tweens.add({ targets: this.gateText, alpha: 0, duration: 700, delay: 1400 });
+      return;
+    }
     if (button === 'B' && !this.state.config.timed) {
       // Only where there is no clock, which is the practice modes: swapping the
       // course under a race would throw away the time it was being run for.

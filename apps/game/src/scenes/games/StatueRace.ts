@@ -320,11 +320,16 @@ export class StatueRace extends BaseGameScene {
 
     const present = session.presentPlayers.length;
     const needed = this.requiredPlayers();
-    if (present < needed) {
+    // Before the start only. The comment above always said so and the code did
+    // not: a two-phone race that lost one phone stopped stepping altogether, so
+    // the player still holding theirs could not move, could not finish, and no
+    // timer could rescue them — the race simply stopped being a race.
+    const starting = this.state.phase === 'countdown';
+    if (starting && present < needed) {
       return `폰 ${present}/${needed}대 — 연결을 기다립니다\n진행 상황은 그대로 있습니다`;
     }
 
-    if (this.state.phase === 'countdown') {
+    if (starting) {
       const silent = session.presentPlayers.filter((player) => this.heard.get(player.id) !== true);
       if (silent.length > 0) {
         return (

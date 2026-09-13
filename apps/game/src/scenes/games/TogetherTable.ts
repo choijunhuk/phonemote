@@ -510,7 +510,7 @@ export class TogetherTable extends BaseGameScene {
       case 'practice':
         return '공을 원 안에 유지하세요 — 화살표는 실제 기울기의 10배입니다';
       case 'versus':
-        return `자기 색 구멍에 ${this.state.config.goalsToWin}골 먼저`;
+        return `구멍이 있는 참가자는 자기 색에 ${this.state.config.goalsToWin}골 먼저`;
       case 'coop':
         return '초록 구멍으로 — 판은 전원의 평균입니다';
       default:
@@ -562,8 +562,11 @@ export class TogetherTable extends BaseGameScene {
       );
       lines.push(`판 속도    ${state.tableRate.toFixed(0)}°/s`);
       lines.push(
+        // Distance from the ring's centre, RMS, including time spent inside it —
+        // not how far outside the ring the ball strayed, which the old label
+        // claimed. Kept on one line: this panel has no room for another.
         `원 안 유지 ${(ringHold(state) * 100).toFixed(0)}%   ` +
-          `평균 이탈 ${(ringRms(state) * 100).toFixed(0)}%`,
+          `중심 거리 RMS ${(ringRms(state) * 100).toFixed(0)}%`,
       );
       lines.push(`공 위치    ${state.ball.x.toFixed(2)}, ${state.ball.y.toFixed(2)}`);
       return lines.join('\n');
@@ -633,6 +636,15 @@ export class TogetherTable extends BaseGameScene {
 
   private cardDetail(player: TablePlayer): string {
     const config = this.state.config;
+    if (
+      config.mode === 'versus' &&
+      this.state.phase !== 'grip' &&
+      !this.state.seats.includes(player.id)
+    ) {
+      return !player.grip
+        ? '다음 경기까지 기울이기 도움\n폰을 들고 잠깐 멈추세요'
+        : '다음 경기까지 기울이기 도움\n폰을 기울여 판을 움직이세요';
+    }
     if (!player.grip) return '폰을 들고 잠깐 멈추면\n그 자세가 기준이 됩니다';
 
     if (config.showNumbers) {

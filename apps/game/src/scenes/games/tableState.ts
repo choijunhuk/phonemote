@@ -677,7 +677,13 @@ export function wobbleRms(player: TablePlayer): number {
   return Math.sqrt(player.wobbleSum / player.wobbleTime);
 }
 
-/** The same for the ball: how far outside the ring it lived, in board units. */
+/**
+ * RMS distance of the ball from the ring's centre, in board widths.
+ *
+ * Includes the time it spent inside the ring, so a ball that never left still
+ * reads above zero. It measures how centred the room kept it, not how far out
+ * it strayed.
+ */
 export function ringRms(state: TableState): number {
   if (state.ringTime <= 0) return 0;
   return Math.sqrt(state.ringSum / state.ringTime);
