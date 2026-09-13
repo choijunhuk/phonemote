@@ -421,7 +421,16 @@ export interface GolfState {
   readonly config: GolfConfig;
   readonly seed: number;
   /** Frozen at match start; a mid-match join is a spectator until the next one. */
-  readonly seats: readonly number[];
+  /**
+   * Frozen at the first tee shot, not at construction.
+   *
+   * A round opened before anybody's phone had connected froze an EMPTY seat
+   * list and an empty turn order, and nothing ever filled them: every shot from
+   * the phone that arrived a second later was refused as not its turn, with no
+   * timeout to break out of it, while the screen said it was waiting for a
+   * phone that was plainly connected.
+   */
+  seats: readonly number[];
   readonly course: readonly GolfHole[];
   order: TurnOrder;
   phase: GolfPhase;
@@ -431,6 +440,8 @@ export interface GolfState {
   timer: number;
   drill: GolfDrill;
   players: GolfPlayer[];
+  /** True once anybody has actually played a shot; seats close at that point. */
+  started: boolean;
   /** Physics time not yet simulated, seconds. */
   accumulator: number;
   /** Seconds since the round began, for windows measured in time. */
@@ -612,6 +623,7 @@ export function createGolf(options: GolfOptions = {}): GolfState {
     timer: 0,
     drill: config.drills[0] ?? 'range',
     players: [],
+    started: false,
     accumulator: 0,
     elapsed: 0,
   };
@@ -648,11 +660,27 @@ export function syncPlayers(
     return newPlayer(state, id);
   });
 
+  // Nobody has teed off yet, so the room is still forming: seat whoever is
+  // here rather than leaving the round unplayable for the phones that arrived
+  // after it was opened. Once a stroke has been played the seats are the match,
+  // and a late arrival waits for the next one.
+  if (!state.started) {
+    const here = state.players.filter((player) => player.present).map((player) => player.id);
+    if (here.length > 0 && !sameSeats(state.seats, here)) {
+      state.seats = assignSeats(here);
+      state.order = createTurnOrder(state.seats, state.config.turnSeconds);
+    }
+  }
+
   if (!state.config.turnBased) return events;
   for (const player of state.players) {
     events.push(...applyTurnEvents(state, setAbsent(state.order, player.id, !player.present)));
   }
   return events;
+}
+
+function sameSeats(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
 }
 
 function newPlayer(state: GolfState, id: number): GolfPlayer {
@@ -1031,6 +1059,7 @@ function strike(state: GolfState, player: GolfPlayer, shot: StrikeInput): GolfEv
   };
 
   player.strokes++;
+  state.started = true;
   player.plan = plan;
   // Kept so a harder swing arriving moments later can take this shot back.
   player.lastStrike = { at: state.elapsed, peakRate: shot.peakRate, ball: { ...player.ball } };

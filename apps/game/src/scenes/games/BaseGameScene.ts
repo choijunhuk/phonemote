@@ -41,12 +41,15 @@ export abstract class BaseGameScene extends Phaser.Scene {
 
   private cleanups: Array<() => void> = [];
   private lobbyIn = 0;
+  /** Whether the countdown was asked for during the frame just simulated. */
+  private lobbyArmed = false;
   private waitingText: Phaser.GameObjects.Text | null = null;
 
   init(data: GameSceneData = {}): void {
     this.mode = asMode(data.mode);
     this.cleanups = [];
     this.lobbyIn = 0;
+    this.lobbyArmed = false;
     this.waitingText = null;
     this.lastDelta = 1 / 60;
   }
@@ -89,15 +92,24 @@ export abstract class BaseGameScene extends Phaser.Scene {
     const dt = Math.min(delta / 1000, 1 / 30);
     this.lastDelta = dt;
 
+    this.lobbyArmed = false;
+    this.step(dt);
+
+    // The countdown only runs while the scene keeps asking for it. Every caller
+    // asks from inside step(), guarded by its own terminal condition, so a game
+    // that starts another round in place simply stops asking and the countdown
+    // goes away — which is what a player expects when they press A for a
+    // rematch. Before this it kept running: the ski run restarted, the player
+    // skied, and twelve seconds later the old timer threw them into the lobby
+    // in the middle of it.
+    if (!this.lobbyArmed) {
+      this.lobbyIn = 0;
+      return;
+    }
     if (this.lobbyIn > 0) {
       this.lobbyIn -= dt;
-      if (this.lobbyIn <= 0) {
-        this.scene.start('lobby');
-        return;
-      }
+      if (this.lobbyIn <= 0) this.scene.start('lobby');
     }
-
-    this.step(dt);
   }
 
   /** Build the scene. Called once per run, after init() has cleared state. */
@@ -124,9 +136,11 @@ export abstract class BaseGameScene extends Phaser.Scene {
    *
    * A finished game must never be a dead screen: a match that ended while
    * everyone had put their phone down would otherwise sit there until somebody
-   * found the keyboard. Calling it repeatedly does not restart the countdown.
+   * found the keyboard. Calling it repeatedly does not restart the countdown,
+   * and a frame that does not call it cancels it.
    */
   protected returnToLobbyAfter(seconds: number): void {
+    this.lobbyArmed = true;
     if (this.lobbyIn <= 0) this.lobbyIn = seconds;
   }
 

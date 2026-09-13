@@ -1038,3 +1038,44 @@ describe('the half shot', () => {
     expect(player(state).lastShot?.carryM).toBeCloseTo(CLUB_CARRY_M.driver, 6);
   });
 });
+
+describe('a round opened before anybody has connected', () => {
+  it('seats the phone that arrives a second later', () => {
+    // The seats and the turn order used to be frozen empty at construction, so
+    // every shot from the phone that arrived after was refused as not its turn,
+    // with no timeout to break out of it, while the screen said it was waiting
+    // for a phone that was plainly connected.
+    const state = createGolf({ mode: 'versus', playerIds: [] });
+    expect(state.seats).toHaveLength(0);
+
+    syncPlayers(state, [{ id: 7, present: true }]);
+    expect(state.seats).toEqual([7]);
+    expect(shooter(state)).toBe(7);
+  });
+
+  it('keeps seating people until the first shot is played', () => {
+    const state = createGolf({ mode: 'versus', playerIds: [] });
+    syncPlayers(state, [{ id: 1, present: true }]);
+    syncPlayers(state, [
+      { id: 1, present: true },
+      { id: 2, present: true },
+    ]);
+    expect(state.seats).toEqual([1, 2]);
+  });
+
+  it('stops seating once somebody has teed off', () => {
+    // After a shot the seats are the match, and a late arrival waits for the
+    // next one rather than being dealt into a round already in progress.
+    const state = createGolf({ mode: 'versus', playerIds: [1] });
+    syncPlayers(state, [{ id: 1, present: true }]);
+    grip(state, 1);
+    swing(state, 1);
+    expect(state.started).toBe(true);
+
+    syncPlayers(state, [
+      { id: 1, present: true },
+      { id: 2, present: true },
+    ]);
+    expect(state.seats).toEqual([1]);
+  });
+});
