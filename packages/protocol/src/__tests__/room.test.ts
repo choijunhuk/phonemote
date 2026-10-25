@@ -5,7 +5,7 @@ import {
   REJOIN_GRACE_MS,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
-} from '@phonemote/protocol';
+} from '../constants.js';
 import { RoomRegistry, randomRoomCode, type Connection } from '../room.js';
 
 class FakeConnection implements Connection {

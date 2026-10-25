@@ -9,13 +9,14 @@ import {
   isPing,
   isPong,
   parseMessage,
+  RoomRegistry,
   toArrayBuffer,
+  type Connection,
   type ErrorCode,
   type ServerMsg,
 } from '@phonemote/protocol';
 import { loadTlsMaterial, MissingCertificateError } from './https.js';
 import { resolveLanIp } from './lanIp.js';
-import { RoomRegistry, type Connection } from './room.js';
 import { TraceRecorder, listTraces, readTrace } from './recorder.js';
 import { MAX_LOG_BYTES, appendLog, listLogs } from './logs.js';
 

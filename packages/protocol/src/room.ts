@@ -4,16 +4,20 @@ import {
   REJOIN_GRACE_MS,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
-  type ErrorCode,
-  type ServerMsg,
-} from '@phonemote/protocol';
+} from './constants.js';
+import type { ErrorCode, ServerMsg } from './messages.js';
 
 /**
  * Room bookkeeping (ARCHITECTURE.md 7.1).
  *
- * The relay never looks inside a sensor packet: it only needs to know which
- * socket to hand it to. Sockets are behind this narrow interface so the rules
- * can be tested without a network.
+ * The rules of a room — slots, colours, rejoining after a drop, a full room —
+ * independent of how the bytes travel. Two hosts run them: the LAN relay, with
+ * WebSockets behind `Connection`, and the game page itself when it is the host
+ * for phones joining over WebRTC (D60). Living here rather than in the relay is
+ * what lets both use the one tested copy.
+ *
+ * The room never looks inside a sensor packet: it only needs to know which
+ * connection to hand it to.
  */
 
 export interface Connection {
