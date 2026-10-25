@@ -35,6 +35,7 @@ desktop.ini
 .idea/
 .vscode/*
 !.vscode/extensions.json
+.serena/
 
 # root CA copy published to the phone by scripts/setup-certs.sh
 apps/controller/public/rootCA.crt

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 // Relative import on purpose: vite.config.ts is loaded by Node before any TS
@@ -38,31 +38,42 @@ function serveRootCa(): Plugin {
   };
 }
 
+function devCertificate(): { cert: Buffer; key: Buffer } {
+  const cert = resolve(certDir, 'dev-cert.pem');
+  const key = resolve(certDir, 'dev-key.pem');
+  if (!existsSync(cert) || !existsSync(key)) {
+    throw new Error(`No dev certificate in ${certDir}. Run \`pnpm setup:certs\` first.`);
+  }
+  return { cert: readFileSync(cert), key: readFileSync(key) };
+}
+
 /**
  * The controller must be served over HTTPS: DeviceMotionEvent and
  * DeviceOrientationEvent only fire in a secure context (ARCHITECTURE.md 2).
+ *
+ * Only serving needs the certificate (`vite preview` counts as serving). A
+ * build reads none, so it works on a machine that has never run
+ * `pnpm setup:certs`, such as CI.
  */
-const https = {
-  cert: readFileSync(resolve(certDir, 'dev-cert.pem')),
-  key: readFileSync(resolve(certDir, 'dev-key.pem')),
-};
-
-export default defineConfig({
-  plugins: [serveRootCa()],
-  /**
-   * Vite's dev client is 200 kB of HMR machinery the phone has no use for, and
-   * it goes over Wi-Fi on every load. `pnpm play` serves the built app instead.
-   */
-  preview: {
-    host: '0.0.0.0',
-    port: PORTS.controller,
-    strictPort: true,
-    https,
-  },
-  server: {
-    host: '0.0.0.0',
-    port: PORTS.controller,
-    strictPort: true,
-    https,
-  },
+export default defineConfig(({ command }) => {
+  const tls = command === 'serve' ? { https: devCertificate() } : {};
+  return {
+    plugins: [serveRootCa()],
+    /**
+     * Vite's dev client is 200 kB of HMR machinery the phone has no use for, and
+     * it goes over Wi-Fi on every load. `pnpm play` serves the built app instead.
+     */
+    preview: {
+      host: '0.0.0.0',
+      port: PORTS.controller,
+      strictPort: true,
+      ...tls,
+    },
+    server: {
+      host: '0.0.0.0',
+      port: PORTS.controller,
+      strictPort: true,
+      ...tls,
+    },
+  };
 });

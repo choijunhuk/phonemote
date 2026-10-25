@@ -4,8 +4,10 @@
   "private": true,
   "description": "Use an Android phone as a Wii-style motion controller for browser games on a PC",
   "type": "module",
+  "license": "MIT",
+  "packageManager": "pnpm@11.24.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "scripts": {
     "dev": "pnpm -r --parallel dev",

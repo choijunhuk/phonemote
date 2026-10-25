@@ -1,5 +1,8 @@
 # PhoneMote
 
+[![CI](https://github.com/choijunhuk/phonemote/actions/workflows/ci.yml/badge.svg)](https://github.com/choijunhuk/phonemote/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Android 스마트폰을 Wii 리모컨처럼 쓰는 웹 모션 게임 플랫폼.
 폰이 센서 + 버튼, PC가 게임기다.
 
@@ -9,7 +12,7 @@ Android 스마트폰을 Wii 리모컨처럼 쓰는 웹 모션 게임 플랫폼.
 |---|---|---|
 | Controller | Android 최신 Chrome **전용** | `https://<LAN-IP>:5174` |
 | Game | PC 브라우저 (Chromium 권장) | `https://<LAN-IP>:5173` |
-| Relay | Node.js 20+ | `wss://<LAN-IP>:8443` |
+| Relay | Node.js 22.13+ | `wss://<LAN-IP>:8443` |
 
 전 구간이 HTTPS/WSS다. `DeviceMotionEvent` / `DeviceOrientationEvent` 는
 secure context에서만 발화하고, HTTPS 페이지에서 `ws://` 는 mixed content로 차단되기 때문이다.
@@ -18,7 +21,7 @@ secure context에서만 발화하고, HTTPS 페이지에서 `ws://` 는 mixed co
 
 ## 1. 준비물
 
-- Node.js 20 이상
+- Node.js 22.13 이상 (pnpm 11이 요구하는 최소 버전)
 - pnpm — `npm install -g pnpm`
 - [mkcert](https://github.com/FiloSottile/mkcert) — `winget install FiloSottile.mkcert`
   (설치 후 새 셸을 열어야 PATH가 적용된다)
