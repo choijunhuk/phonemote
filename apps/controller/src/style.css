@@ -204,3 +204,15 @@ button.start {
   border-color: var(--player);
   color: white;
 }
+
+/* The raw sensor readout, folded away until asked for. */
+.debug-fold > summary {
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.debug-fold[open] > summary {
+  margin-bottom: 0.4rem;
+}

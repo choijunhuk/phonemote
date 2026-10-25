@@ -30,10 +30,10 @@ const support = checkSupport();
 
 if (!support.supported && WEB_BUILD) {
   ui.setStatus('failed', `사용할 수 없음: ${support.missing.join(', ')}`);
-  ui.setDebugText('이 페이지는 Android 폰의 Chrome에서 열어야 합니다.');
+  ui.showHelp('이 페이지는 Android 폰의 Chrome에서 열어야 합니다.');
 } else if (!support.supported) {
   ui.setStatus('failed', `사용할 수 없음: ${support.missing.join(', ')}`);
-  ui.setDebugText(
+  ui.showHelp(
     '이 페이지는 Android Chrome에서 HTTPS로 열어야 합니다.\n' +
       '인증서 경고를 무시하고 들어온 경우에도 센서는 동작하지만,\n' +
       '릴레이 연결은 루트 CA를 설치해야 합니다. README 3장을 보세요.',

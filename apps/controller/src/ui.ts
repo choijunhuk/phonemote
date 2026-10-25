@@ -46,7 +46,9 @@ const BUTTON_LAYOUT: ReadonlyArray<{
   { name: 'MINUS', label: '−', className: 'small' },
   { name: 'HOME', label: 'HOME', className: 'small home' },
   { name: 'PLUS', label: '+', className: 'small' },
-  { name: 'TRIGGER', label: 'B\ntrigger', className: 'trigger' },
+  // Called 트리거 everywhere the games mention it. Labelled "B trigger", after
+  // the Wii Remote, it sat next to the real B button and read as a second B.
+  { name: 'TRIGGER', label: '트리거', className: 'trigger' },
   { name: 'A', label: 'A', className: 'primary' },
   { name: 'B', label: 'B', className: 'secondary' },
 ];
@@ -65,6 +67,8 @@ export class ControllerUi {
   private readonly joinSection = document.createElement('form');
   private readonly padSection = document.createElement('section');
   private readonly debugSection = document.createElement('pre');
+  /** The raw readout is for checking a phone, not for playing: folded away. */
+  private readonly debugFold = document.createElement('details');
   private readonly roomInput = document.createElement('input');
   private readonly nameInput = document.createElement('input');
   private readonly holdControl = document.createElement('div');
@@ -89,6 +93,10 @@ export class ControllerUi {
     this.root.replaceChildren();
     this.statusEl.className = 'status';
     this.debugSection.className = 'debug';
+    this.debugFold.className = 'debug-fold';
+    const summary = document.createElement('summary');
+    summary.textContent = '센서 값';
+    this.debugFold.append(summary, this.debugSection);
     this.padSection.className = 'pad hidden';
     this.joinSection.className = 'join';
     this.holdControl.className = 'hold-holder hidden';
@@ -97,7 +105,7 @@ export class ControllerUi {
       this.joinSection,
       this.padSection,
       this.holdControl,
-      this.debugSection,
+      this.debugFold,
     );
     this.buildPad();
 
@@ -247,6 +255,12 @@ export class ControllerUi {
 
   setDebugText(text: string): void {
     this.debugSection.textContent = text;
+  }
+
+  /** For text a player must read, such as why this browser cannot be used. */
+  showHelp(text: string): void {
+    this.setDebugText(text);
+    this.debugFold.open = true;
   }
 
   /**
