@@ -19,11 +19,24 @@ export type ConnectionState = 'idle' | 'connecting' | 'joined' | 'reconnecting' 
 
 export interface TransportHandlers {
   onState(state: ConnectionState, detail?: string): void;
-  onJoined(playerId: number, color: string): void;
+  /** `resumed`: back in the seat it held before a drop. */
+  onJoined(playerId: number, color: string, resumed: boolean): void;
   /** Everything the phone still cares about: errors and haptics. */
   onServerMessage(message: ServerMsg | Feedback): void;
   /** The room is gone for good; the player has to pick a new one. */
   onGiveUp(reason: string): void;
+}
+
+/**
+ * How the phone reaches the game: the relay socket below on the LAN, or a
+ * WebRTC link straight to the game page in the web build (peerTransport.ts).
+ */
+export interface ControllerLink {
+  readonly currentPlayerId: number | null;
+  connect(): void;
+  /** False when the frame was dropped rather than sent. */
+  sendFrame(buffer: ArrayBuffer): boolean;
+  close(): void;
 }
 
 const RECONNECT_DELAY_MS = 1000;
@@ -31,12 +44,16 @@ const RECONNECT_DELAY_MS = 1000;
  * Three frames. The old 4096 was 73 frames — over a second of backlog that the
  * player would feel as lag long before anything was dropped.
  */
-const MAX_BUFFERED_BYTES = SENSOR_FRAME_BYTES * 3;
+export const MAX_BUFFERED_BYTES = SENSOR_FRAME_BYTES * 3;
 
 /** Errors that mean "stop trying", as opposed to "try again in a second". */
-const TERMINAL_ERRORS = new Set(['ROOM_NOT_FOUND', 'ROOM_FULL', 'GAME_LEFT']);
+export const TERMINAL_ERRORS: ReadonlySet<string> = new Set([
+  'ROOM_NOT_FOUND',
+  'ROOM_FULL',
+  'GAME_LEFT',
+]);
 
-export class Transport {
+export class Transport implements ControllerLink {
   private socket: WebSocket | null = null;
   private closedByUs = false;
   private reconnectTimer: number | null = null;
@@ -84,8 +101,7 @@ export class Transport {
 
       if (message.type === 'joined') {
         this.playerId = message.playerId;
-        this.handlers.onState('joined', message.resumed === true ? '복귀' : undefined);
-        this.handlers.onJoined(message.playerId, message.color);
+        this.handlers.onJoined(message.playerId, message.color, message.resumed === true);
         return;
       }
       if (message.type === 'ping') {

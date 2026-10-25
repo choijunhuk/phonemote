@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import QRCode from 'qrcode';
-import { DEMO } from '../demo.js';
+import { WEB_BUILD } from '../web.js';
 import { session } from '../session.js';
 import {
   GAMES,
@@ -78,18 +78,16 @@ export class LobbyScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
-    // The demo has no room to join (D56), so the space that would hold the
-    // room code says what is standing in for the phones instead.
     this.codeText = this.add
-      .text(width * 0.26, height * 0.2, DEMO ? 'DEMO' : '연결 중…', {
+      .text(width * 0.26, height * 0.2, '연결 중…', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '84px',
         color: '#2ed573',
       })
       .setOrigin(0.5);
 
-    const joinHint = DEMO
-      ? '키보드가 폰 대신 센서 값을 만들어 보냅니다'
+    const joinHint = WEB_BUILD
+      ? '안드로이드 폰 Chrome으로 QR을 찍으세요'
       : '폰 Chrome에서 QR 스캔 또는 룸 코드 입력';
     this.add
       .text(width * 0.26, height * 0.29, joinHint, {
@@ -323,15 +321,13 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   private refresh(): void {
-    if (!DEMO) {
-      const room = session.room;
-      this.codeText.setText(room ? room.roomCode : '연결 중…');
-      this.codeText.setColor(room ? '#2ed573' : '#ff4757');
+    const room = session.room;
+    this.codeText.setText(room ? room.roomCode : '연결 중…');
+    this.codeText.setColor(room ? '#2ed573' : '#ff4757');
 
-      if (room && !this.qrShown) {
-        this.qrShown = true;
-        void this.showQr(room.controllerUrl);
-      }
+    if (room && !this.qrShown) {
+      this.qrShown = true;
+      void this.showQr(room.controllerUrl);
     }
 
     const players = session.players;
@@ -403,7 +399,9 @@ export class LobbyScene extends Phaser.Scene {
     const players = session.players;
     const controls =
       players.length === 0
-        ? '폰을 연결하거나, 키보드 ↑↓←→ + Enter   ·   숫자키 1~9로 바로 시작'
+        ? WEB_BUILD
+          ? 'QR로 폰을 연결하거나, N으로 키보드 플레이어 추가   ·   ↑↓←→ + Enter'
+          : '폰을 연결하거나, 키보드 ↑↓←→ + Enter   ·   숫자키 1~9로 바로 시작'
         : players.every((player) => session.isLocal(player.id))
           ? '↑↓ 게임   ·   ←→ 모드   ·   Enter 또는 Z(A)로 시작   ·   숫자키 1~9'
           : '고르고 A로 시작   ·   ←→ 모드   ·   B 다음   ·   숫자키 1~9';
@@ -422,24 +420,52 @@ export class LobbyScene extends Phaser.Scene {
 ${controls}`;
   }
 
+  /**
+   * The QR for this room, made once per address and reused.
+   *
+   * Textures belong to the game, not the scene, so they outlive a lobby
+   * restart. Adding 'qr' again on the second visit was an error ("Texture key
+   * already in use") every time a game returned to the lobby. Keyed by the
+   * address, a new room code still gets a new code image.
+   */
   private async showQr(controllerUrl: string): Promise<void> {
-    const dataUrl = await QRCode.toDataURL(controllerUrl, {
-      margin: 1,
-      width: 320,
-      color: { dark: '#0f1116', light: '#ffffff' },
-    });
+    const key = `qr:${controllerUrl}`;
+    if (!this.textures.exists(key)) {
+      const dataUrl = await QRCode.toDataURL(controllerUrl, {
+        margin: 1,
+        width: 320,
+        color: { dark: '#0f1116', light: '#ffffff' },
+      });
+      await new Promise<void>((resolve) => {
+        this.textures.once(`addtexture-${key}`, () => resolve());
+        this.textures.addBase64(key, dataUrl);
+      });
+    }
+    // The player may have started a game while the image was being made.
+    if (!this.scene.isActive()) return;
 
-    this.textures.once('addtexture-qr', () => {
-      const { width, height } = this.scale;
-      this.add.image(width * 0.26, height * 0.72, 'qr').setDisplaySize(200, 200);
-      this.add
-        .text(width * 0.26, height * 0.88, controllerUrl, {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '20px',
-          color: '#98a0b3',
-        })
-        .setOrigin(0.5);
-    });
-    this.textures.addBase64('qr', dataUrl);
+    const { width, height } = this.scale;
+    this.add.image(width * 0.26, height * 0.72, key).setDisplaySize(200, 200);
+    this.add
+      .text(width * 0.26, height * 0.88, shortUrl(controllerUrl), {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '20px',
+        color: '#98a0b3',
+      })
+      .setOrigin(0.5);
+  }
+}
+
+/**
+ * The address without its scheme and query, for reading off the screen: the
+ * room code is already shown in large type above, and the web build's full
+ * URL was wider than the column it sits in.
+ */
+function shortUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.host}${parsed.pathname}`.replace(/\/$/, '');
+  } catch {
+    return url;
   }
 }

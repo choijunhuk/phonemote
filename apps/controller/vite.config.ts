@@ -55,9 +55,17 @@ function devCertificate(): { cert: Buffer; key: Buffer } {
  * build reads none, so it works on a machine that has never run
  * `pnpm setup:certs`, such as CI.
  */
-export default defineConfig(({ command }) => {
-  const tls = command === 'serve' ? { https: devCertificate() } : {};
+export default defineConfig(({ command, mode }) => {
+  // The web build (D60) is served from a public HTTPS origin and needs no
+  // certificate of ours, even to preview.
+  const web = mode === 'web';
+  const tls = command === 'serve' && !web ? { https: devCertificate() } : {};
   return {
+    // Relative, because it is published under the game: /phonemote/controller/.
+    base: web ? './' : '/',
+    // public/ holds this machine's root CA, copied there for phones on the LAN.
+    // Publishing it to the web would hand out a file that has no use there.
+    publicDir: web ? false : 'public',
     plugins: [serveRootCa()],
     /**
      * Vite's dev client is 200 kB of HMR machinery the phone has no use for, and

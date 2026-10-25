@@ -35,9 +35,54 @@ export interface GameClientHandlers {
   onDisconnect(): void;
 }
 
+/**
+ * How the game reaches its phones. Two exist: the relay socket below, for the
+ * LAN setup, and the page acting as the host itself, for phones joining over
+ * WebRTC (net/peerHost.ts, D60). The session cannot tell them apart.
+ */
+export interface GameLink {
+  connect(): void;
+  ping(playerId: number, id: number): void;
+  vibrate(playerId: number, pattern: number[]): void;
+  /**
+   * Seat a player driven from this machine, such as a keyboard stand-in, in
+   * the same room as the phones, so the two can never be handed the same seat.
+   * Absent when the room lives elsewhere (the relay); null when it is full.
+   */
+  claimLocalSeat?(name: string): PlayerInfo | null;
+}
+
+/**
+ * What a room says to the game, handed to the session.
+ *
+ * The relay sends it down a socket and the in-page host calls it directly; the
+ * messages are the same either way.
+ */
+export function deliverToGame(handlers: GameClientHandlers, text: string): void {
+  const message = parseMessage(text);
+  if (!message) return;
+
+  switch (message.type) {
+    case 'room':
+      handlers.onRoom(message);
+      break;
+    case 'player_join':
+      handlers.onPlayerJoin({ id: message.playerId, name: message.name, color: message.color });
+      break;
+    case 'player_leave':
+      handlers.onPlayerLeave(message.playerId);
+      break;
+    case 'pong':
+      handlers.onPong(message.playerId, message.id);
+      break;
+    default:
+      break;
+  }
+}
+
 const RECONNECT_DELAY_MS = 1000;
 
-export class GameClient {
+export class GameClient implements GameLink {
   private socket: WebSocket | null = null;
 
   constructor(
@@ -59,29 +104,7 @@ export class GameClient {
         this.handlers.onFrame(decodeSensor(event.data));
         return;
       }
-      const message = parseMessage(event.data);
-      if (!message) return;
-
-      switch (message.type) {
-        case 'room':
-          this.handlers.onRoom(message);
-          break;
-        case 'player_join':
-          this.handlers.onPlayerJoin({
-            id: message.playerId,
-            name: message.name,
-            color: message.color,
-          });
-          break;
-        case 'player_leave':
-          this.handlers.onPlayerLeave(message.playerId);
-          break;
-        case 'pong':
-          this.handlers.onPong(message.playerId, message.id);
-          break;
-        default:
-          break;
-      }
+      deliverToGame(this.handlers, event.data);
     });
 
     socket.addEventListener('close', () => {

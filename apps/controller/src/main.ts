@@ -3,12 +3,15 @@ import {
   encodeSensor,
   type SensorFrame,
 } from '@phonemote/protocol';
+import { BroadcastSignaling, PUBLIC_ICE_SERVERS, publicSignaling } from '@phonemote/peer';
 import { formatSnapshot } from './debug.js';
 import { clientId } from './identity.js';
+import { PeerTransport } from './peerTransport.js';
 import { SensorSource, checkSupport, type SensorSnapshot } from './sensors.js';
-import { Transport } from './transport.js';
+import { Transport, type ControllerLink, type TransportHandlers } from './transport.js';
 import { ControllerUi } from './ui.js';
 import { requestWakeLock, watchVisibility } from './wakelock.js';
+import { WEB_BUILD } from './web.js';
 
 /**
  * Controller entry point: capture raw sensors, send them, echo pings, buzz.
@@ -22,10 +25,13 @@ const SENSOR_RESTART_AFTER_MS = 2000;
 const app = document.querySelector<HTMLElement>('#app');
 if (!app) throw new Error('#app is missing from index.html');
 
-const ui = new ControllerUi(app);
+const ui = new ControllerUi(app, { offerRootCa: !WEB_BUILD });
 const support = checkSupport();
 
-if (!support.supported) {
+if (!support.supported && WEB_BUILD) {
+  ui.setStatus('failed', `사용할 수 없음: ${support.missing.join(', ')}`);
+  ui.setDebugText('이 페이지는 Android 폰의 Chrome에서 열어야 합니다.');
+} else if (!support.supported) {
   ui.setStatus('failed', `사용할 수 없음: ${support.missing.join(', ')}`);
   ui.setDebugText(
     '이 페이지는 Android Chrome에서 HTTPS로 열어야 합니다.\n' +
@@ -34,6 +40,21 @@ if (!support.supported) {
   );
 } else {
   start();
+}
+
+/** The relay on the LAN, or the game page itself in the web build (D60). */
+function linkFor(
+  roomCode: string,
+  handlers: TransportHandlers,
+  name: string | undefined,
+): ControllerLink {
+  if (!WEB_BUILD) return new Transport(roomCode, handlers, name, clientId());
+  // `?signal=local` keeps the handshake inside one browser, for the e2e test.
+  const local = new URLSearchParams(window.location.search).get('signal') === 'local';
+  return new PeerTransport(roomCode, handlers, name, clientId(), {
+    signaling: (address) => (local ? new BroadcastSignaling(address) : publicSignaling(address)),
+    iceServers: local ? [] : PUBLIC_ICE_SERVERS,
+  });
 }
 
 function start(): void {
@@ -61,11 +82,11 @@ function run(roomCode: string, name: string): void {
   let lastSecond = performance.now();
   let hz = 0;
 
-  const transport = new Transport(
+  const transport = linkFor(
     roomCode,
     {
       onState: (state, detail) => ui.setStatus(state, detail),
-      onJoined: (playerId, color) => ui.showPad(color, playerId),
+      onJoined: (playerId, color, resumed) => ui.showPad(color, playerId, resumed),
       onServerMessage: (message) => {
         if (message.type === 'vibrate') ui.vibrate(message.pattern);
         if (message.type === 'error') ui.setStatus('failed', message.message);
@@ -73,7 +94,6 @@ function run(roomCode: string, name: string): void {
       onGiveUp: (reason) => ui.showJoinAgain(reason),
     },
     name || undefined,
-    clientId(),
   );
   transport.connect();
 

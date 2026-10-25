@@ -5,7 +5,7 @@ import {
   SENSOR_FRAME_VERSION,
   type SensorFrame,
 } from '@phonemote/protocol';
-import { DEMO } from '../demo.js';
+import { WEB_BUILD } from '../web.js';
 import { session } from '../session.js';
 
 /**
@@ -24,11 +24,11 @@ import { session } from '../session.js';
 
 const FRAME_MS = 1000 / 60;
 /**
- * Well clear of the 1-4 the relay hands out, so it can never collide. The demo
- * has no relay and so nothing to collide with, and there the players are
- * simply P1 and P2 rather than the P90 every scene's labels would print.
+ * Only for the LAN setup, where the relay owns the room and cannot be asked for
+ * a seat: well clear of the 1-4 it hands out. In the web build the page owns
+ * the room, and keyboard players are seated in it like phones (D60).
  */
-const FAKE_ID_BASE = DEMO ? 1 : 90;
+const FAKE_ID_BASE = 90;
 
 interface Keymap {
   readonly left: string;
@@ -263,17 +263,14 @@ function eulerFor(pitchDeg: number, rollDeg: number): { alpha: number; beta: num
   };
 }
 
-export function startFakeControllers(count: number): void {
-  const keymaps = [PRIMARY, SECONDARY, THIRD, FOURTH].slice(0, Math.max(1, Math.min(4, count)));
-  const phones = keymaps.map((keys, index) => {
-    const playerId = FAKE_ID_BASE + index;
-    session.addLocalPlayer({
-      id: playerId,
-      name: `KB${index + 1}`,
-      color: PLAYER_COLORS[index % PLAYER_COLORS.length] ?? '#ffffff',
-    });
-    return new FakePhone(playerId, keys);
-  });
+const KEYMAPS = [PRIMARY, SECONDARY, THIRD, FOURTH] as const;
+const phones: FakePhone[] = [];
+let installed = false;
+
+/** The keyboard listeners and the 60 Hz pump, once, however many players join. */
+function install(): void {
+  if (installed) return;
+  installed = true;
 
   window.addEventListener('keydown', (event) => {
     for (const phone of phones) phone.press(event.key);
@@ -296,10 +293,10 @@ export function startFakeControllers(count: number): void {
    * Feeding frames on a clock of the caller's choosing, alongside `game.step`,
    * runs a whole match in a few milliseconds and makes the result repeatable.
    *
-   * The demo build keeps it too: it is what the end-to-end test drives, so the
+   * The web build keeps it too: it is what the end-to-end test drives, so the
    * test plays the exact files that get deployed.
    */
-  if (import.meta.env.DEV || DEMO) {
+  if (import.meta.env.DEV || WEB_BUILD) {
     Object.assign(window, {
       phonemoteFake: {
         tick(now: number): void {
@@ -314,10 +311,37 @@ export function startFakeControllers(count: number): void {
       },
     });
   }
+}
 
+/**
+ * One more keyboard player, on the next free key layout. False when all four
+ * layouts are taken or the room has no seat left.
+ */
+export function addKeyboardPlayer(): boolean {
+  const index = phones.length;
+  const keys = KEYMAPS[index];
+  if (!keys) return false;
+
+  const name = `KB${index + 1}`;
+  const seat = session.claimLocalPlayer(name, {
+    id: FAKE_ID_BASE + index,
+    name,
+    color: PLAYER_COLORS[index % PLAYER_COLORS.length] ?? '#ffffff',
+  });
+  if (!seat) {
+    session.log('자리가 없습니다 — 4명까지');
+    return false;
+  }
+
+  install();
+  phones.push(new FakePhone(seat.id, keys));
   console.log(
-    `[fake] ${phones.length} keyboard controller(s): arrows tilt (trigger = level again), ` +
-      'space swings, zxc buttons, h home' +
-      (phones.length > 1 ? ' — second on wasd/q/erf/g' : ''),
+    `[fake] ${name} on ${index === 0 ? 'arrows / space / z x c / h' : 'its own keys'} as P${seat.id}`,
   );
+  return true;
+}
+
+export function startFakeControllers(count: number): void {
+  const wanted = Math.max(1, Math.min(KEYMAPS.length, count));
+  for (let i = 0; i < wanted; i++) addKeyboardPlayer();
 }

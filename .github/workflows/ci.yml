@@ -42,7 +42,7 @@ jobs:
       - run: pnpm build
 
   e2e:
-    name: End-to-end (browser demo)
+    name: End-to-end (web build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -54,8 +54,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @phonemote/game exec playwright install --with-deps chromium
-      - run: pnpm --filter @phonemote/game build:demo
-      # Every game, every mode, thirty seconds each, in a real browser.
+      - run: pnpm build:web
+      # Every game, every mode, thirty seconds each, and phones joining over
+      # WebRTC, in a real browser.
       - run: pnpm --filter @phonemote/game test:e2e
 
       - name: Keep the report and screenshots of a failed run
@@ -72,10 +73,10 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v5
         with:
-          path: apps/game/dist/demo
+          path: apps/game/dist/web
 
   deploy-demo:
-    name: Deploy the browser demo
+    name: Deploy the web build
     needs: [check, e2e]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest

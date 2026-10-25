@@ -6,13 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:demo": "vite build --mode demo --outDir dist/demo",
-    "preview:demo": "vite preview --mode demo --outDir dist/demo --port 4173 --strictPort",
+    "build:web": "vite build --mode web --outDir dist/web",
+    "preview:web": "vite preview --mode web --outDir dist/web --port 4173 --strictPort",
     "test:e2e": "playwright test",
     "typecheck": "tsc -p tsconfig.json",
     "play": "vite"
   },
   "dependencies": {
+    "@phonemote/peer": "workspace:*",
     "@phonemote/protocol": "workspace:*",
     "phaser": "^3.90.0",
     "qrcode": "^1.5.4"

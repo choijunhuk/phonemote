@@ -57,7 +57,7 @@ export class DebugOverlay {
     if (!this.visible) return;
 
     // The digit is a player id, the way the relay numbers phones. Keyboard
-    // stand-ins and replays outside the demo have ids far from 1-4, so fall
+    // stand-ins and replays in the LAN setup have ids far from 1-4, so fall
     // back to the Nth player in the room rather than showing nothing at all.
     const players = session.players;
     const player =

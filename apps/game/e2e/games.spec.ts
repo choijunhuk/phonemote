@@ -4,6 +4,7 @@ import { GAMES } from '../src/games.ts';
 /**
  * Every game, in every mode, played by keyboard stand-ins for thirty seconds of
  * game time, in a real browser, against the build that gets deployed (D57).
+ * `?signal=local` keeps the page off the public signaling server.
  *
  * The unit tests cover each game's rules as pure state machines, and none of
  * them runs a scene. What breaks in a scene — a text object touched after
@@ -51,6 +52,7 @@ interface Handle {
   };
   readonly session: {
     readonly players: readonly unknown[];
+    readonly room: { roomCode: string } | null;
     readonly lastError: { message: string } | null;
     configureInput(config: unknown): void;
   };
@@ -112,7 +114,7 @@ async function play(
       const handle = w.phonemote;
       const fake = w.phonemoteFake;
       const state = w.e2e;
-      if (!handle || !fake || !state) throw new Error('the demo handles are missing');
+      if (!handle || !fake || !state) throw new Error('the page handles are missing');
       const game = handle.game;
 
       // Phaser's Game.step with the drawing left out: the same events, in the
@@ -167,27 +169,38 @@ async function play(
   );
 }
 
-test('the demo boots into the lobby with a keyboard player and never looks for a relay', async ({
-  page,
-}) => {
+test('the page opens a room with a code and needs no server of its own', async ({ page }) => {
   const problems = watchForProblems(page);
   const sockets: string[] = [];
   page.on('websocket', (socket) => sockets.push(socket.url()));
 
-  await page.goto('./');
-  await expect(page.locator('.demo-banner')).toContainText('keyboard demo');
-  await waitForLobby(page, 1);
+  await page.goto('./?signal=local');
+  await expect(page.locator('.web-banner')).toContainText('scan the QR code');
+  await waitForLobby(page, 0);
+  await page.waitForFunction(
+    () => /^[A-Z0-9]{4}$/.test((window as TestWindow).phonemote?.session.room?.roomCode ?? ''),
+  );
   await page.screenshot({ path: `${SCREENS}/lobby.png` });
 
   expect(sockets).toEqual([]);
   expect(problems).toEqual([]);
 });
 
+test('N in the lobby seats keyboard players in the room', async ({ page }) => {
+  const problems = watchForProblems(page);
+  await page.goto('./?signal=local');
+  await waitForLobby(page, 0);
+  await page.keyboard.press('n');
+  await waitForLobby(page, 1);
+  await page.keyboard.press('n');
+  await waitForLobby(page, 2);
+  expect(problems).toEqual([]);
+});
+
 test('a recorded phone trace replays from beside the page', async ({ page }) => {
   const problems = watchForProblems(page);
-  await page.goto('./?replay=real-swing.pmtrace');
-  // The keyboard player, and the phone in the recording.
-  await waitForLobby(page, 2);
+  await page.goto('./?signal=local&replay=real-swing.pmtrace');
+  await waitForLobby(page, 1);
   expect(problems).toEqual([]);
 });
 
@@ -199,7 +212,7 @@ for (const game of GAMES) {
       // Two vCPUs on CI, software WebGL, thirty seconds of game per test.
       test.setTimeout(120_000);
       const problems = watchForProblems(page);
-      await page.goto(`./?fake=${mode.minPlayers}`);
+      await page.goto(`./?signal=local&fake=${mode.minPlayers}`);
       await waitForLobby(page, mode.minPlayers);
 
       // What the lobby's launch does, without needing the menu focus there.
@@ -207,7 +220,7 @@ for (const game of GAMES) {
         ({ key, modeKey, calibration, input }) => {
           const w = window as TestWindow;
           const handle = w.phonemote;
-          if (!handle) throw new Error('the demo handle is missing');
+          if (!handle) throw new Error('the page handle is missing');
           handle.game.loop.sleep();
           handle.session.configureInput(input);
           handle.game.scene

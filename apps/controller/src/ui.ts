@@ -15,6 +15,15 @@ export interface JoinRequest {
   readonly name: string;
 }
 
+export interface ControllerUiOptions {
+  /**
+   * The LAN setup needs the phone to trust a local root CA, so its join screen
+   * offers the file. The web build is served with a real certificate and must
+   * not: there is nothing to install.
+   */
+  readonly offerRootCa: boolean;
+}
+
 /**
  * Shortest pulse a phone motor can actually deliver.
  *
@@ -72,7 +81,10 @@ export class ControllerUi {
   private holdMode: HoldMode = 'portrait';
   private onHoldChange: ((mode: HoldMode) => void) | null = null;
 
-  constructor(root: HTMLElement) {
+  constructor(
+    root: HTMLElement,
+    private readonly options: ControllerUiOptions = { offerRootCa: true },
+  ) {
     this.root = root;
     this.root.replaceChildren();
     this.statusEl.className = 'status';
@@ -88,6 +100,19 @@ export class ControllerUi {
       this.debugSection,
     );
     this.buildPad();
+
+    // Once, here. It used to be added on every showJoinForm(), so after a room
+    // closed and the form came back, one tap on 컨트롤러 시작 ran the join
+    // twice and the phone opened two connections to the next room.
+    this.joinSection.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const roomCode = this.roomInput.value.trim().toUpperCase();
+      if (roomCode.length !== 4) {
+        this.setStatus('failed', '룸 코드는 4자리입니다');
+        return;
+      }
+      this.joinHandler?.({ roomCode, name: this.nameInput.value.trim() });
+    });
   }
 
   /**
@@ -156,7 +181,9 @@ export class ControllerUi {
 
     const hint = document.createElement('p');
     hint.className = 'hint';
-    hint.textContent = 'PC 화면의 4자리 룸 코드를 입력하세요.';
+    hint.textContent = prefilledRoom
+      ? 'PC 화면의 코드와 같은지 확인하고 시작하세요.'
+      : 'PC 화면의 4자리 룸 코드를 입력하세요.';
 
     this.roomInput.className = 'room-code';
     this.roomInput.value = prefilledRoom;
@@ -177,13 +204,6 @@ export class ControllerUi {
     submit.className = 'start';
     submit.textContent = '컨트롤러 시작';
 
-    // Kept on the join screen so a second phone can fix its own trust without
-    // anyone going back to the PC (README 3).
-    const caLink = document.createElement('a');
-    caLink.className = 'ca-link';
-    caLink.href = '/rootCA.crt';
-    caLink.textContent = '인증서 경고가 뜬다면: 루트 CA 내려받기';
-
     this.joinSection.replaceChildren(
       title,
       hint,
@@ -191,26 +211,31 @@ export class ControllerUi {
       this.nameInput,
       this.buildHoldControl(),
       submit,
-      caLink,
     );
-    this.joinSection.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const roomCode = this.roomInput.value.trim().toUpperCase();
-      if (roomCode.length !== 4) {
-        this.setStatus('failed', '룸 코드는 4자리입니다');
-        return;
-      }
-      onJoin({ roomCode, name: this.nameInput.value.trim() });
-    });
+
+    if (this.options.offerRootCa) {
+      // Kept on the join screen so a second phone can fix its own trust
+      // without anyone going back to the PC (README).
+      const caLink = document.createElement('a');
+      caLink.className = 'ca-link';
+      caLink.href = '/rootCA.crt';
+      caLink.textContent = '인증서 경고가 뜬다면: 루트 CA 내려받기';
+      this.joinSection.append(caLink);
+    }
   }
 
-  showPad(color: string, playerId: number): void {
+  /**
+   * `resumed` is said here, with the seat, because this is the line that
+   * stays. It used to be set just before and overwritten by the seat number a
+   * moment later, so a phone that came back never showed that it had.
+   */
+  showPad(color: string, playerId: number, resumed = false): void {
     this.joinSection.classList.add('hidden');
     this.padSection.classList.remove('hidden');
     this.holdControl.replaceChildren(this.buildHoldControl());
     this.holdControl.classList.remove('hidden');
     document.body.style.setProperty('--player', color);
-    this.setStatus('joined', `P${playerId}`);
+    this.setStatus('joined', resumed ? `P${playerId} · 복귀` : `P${playerId}`);
   }
 
   private vibrateUntil = 0;

@@ -1,5 +1,11 @@
 import { REJOIN_GRACE_MS, type SensorFrame } from '@phonemote/protocol';
-import { GameClient, type PlayerInfo, type RoomInfo } from './net/client.js';
+import {
+  GameClient,
+  type GameClientHandlers,
+  type GameLink,
+  type PlayerInfo,
+  type RoomInfo,
+} from './net/client.js';
 import { LatencyTracker, StreamQuality, type LatencyStats } from './net/latency.js';
 import { InputMapper, type InputMapperConfig } from './input/InputMapper.js';
 import type { CanonicalSensorFrame, GameAction } from './input/types.js';
@@ -81,13 +87,15 @@ export class GameSession {
   private readonly accelHistory = new Map<number, Array<{ at: number; magnitude: number }>>();
   /** Keyboard stand-ins and replayed traces: players with no phone behind them. */
   private readonly localPlayers = new Set<number>();
+  /** Set while a local seat is being claimed, so the join it causes is marked local. */
+  private claimingLocal = false;
 
   /**
    * One mapper for the life of the session. Rebuilding it per scene threw away
    * the calibration the previous scene had just taken.
    */
   private readonly mapper = new InputMapper();
-  private client: GameClient | null = null;
+  private link: GameLink | null = null;
   private pingId = 0;
 
   room: RoomInfo | null = null;
@@ -114,10 +122,16 @@ export class GameSession {
     return this.players.filter((player) => player.present);
   }
 
-  start(): void {
-    if (this.client) return;
+  /**
+   * Connect to the phones. The relay socket by default; the web build hands in
+   * the page-as-host link instead (main.ts, D60).
+   */
+  start(
+    createLink: (handlers: GameClientHandlers) => GameLink = (handlers) => new GameClient(handlers),
+  ): void {
+    if (this.link) return;
 
-    this.client = new GameClient({
+    this.link = createLink({
       onRoom: (room) => {
         this.room = room;
         this.connected = true;
@@ -139,18 +153,19 @@ export class GameSession {
       },
     });
 
-    this.client.connect();
+    this.link.connect();
 
     window.setInterval(() => {
       for (const player of this.playerMap.keys()) {
         const id = this.pingId++;
         this.latency.get(player)?.recordSent(id, performance.now());
-        this.client?.ping(player, id);
+        this.link?.ping(player, id);
       }
     }, PING_INTERVAL_MS);
   }
 
   private registerPlayer(player: PlayerInfo): void {
+    if (this.claimingLocal) this.localPlayers.add(player.id);
     const eviction = this.evictions.get(player.id);
     if (eviction !== undefined) {
       clearTimeout(eviction);
@@ -206,6 +221,28 @@ export class GameSession {
   }
 
   /**
+   * A seat for a player driven from this machine.
+   *
+   * When the room lives in this page (the web build), the seat comes from the
+   * room itself, so a keyboard player and a phone can never share a number.
+   * When it lives in the relay, which cannot be asked, `fallback` is used: its
+   * id is kept far from the 1-4 the relay hands out. Null when the room is full.
+   */
+  claimLocalPlayer(name: string, fallback: PlayerInfo): PlayerInfo | null {
+    const claim = this.link?.claimLocalSeat?.bind(this.link);
+    if (!claim) {
+      this.addLocalPlayer(fallback);
+      return fallback;
+    }
+    this.claimingLocal = true;
+    try {
+      return claim(name);
+    } finally {
+      this.claimingLocal = false;
+    }
+  }
+
+  /**
    * Whether this player is driven from this machine rather than by a phone.
    *
    * The lobby needs it: the keyboard already moves the menu focus directly, so
@@ -229,7 +266,7 @@ export class GameSession {
   }
 
   vibrate(playerId: number, pattern: number[]): void {
-    this.client?.vibrate(playerId, pattern);
+    this.link?.vibrate(playerId, pattern);
   }
 
   onAction(listener: ActionListener): () => void {

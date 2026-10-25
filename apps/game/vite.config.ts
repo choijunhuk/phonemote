@@ -19,13 +19,13 @@ function devCertificate(): { cert: Buffer; key: Buffer } {
 }
 
 /**
- * Ships the committed trace corpus beside the demo page, so `?replay=` works on
+ * Ships the committed trace corpus beside the web build's page, so `?replay=` works on
  * a static host. In the real game the relay serves these instead.
  */
-function demoTraces(): Plugin {
+function webTraces(): Plugin {
   return {
-    name: 'phonemote-demo-traces',
-    apply: (_config, env) => env.command === 'build' && env.mode === 'demo',
+    name: 'phonemote-web-traces',
+    apply: (_config, env) => env.command === 'build' && env.mode === 'web',
     generateBundle() {
       for (const name of readdirSync(corpusDir)) {
         if (!name.endsWith('.pmtrace')) continue;
@@ -44,26 +44,30 @@ function demoTraces(): Plugin {
  * mixed with wss (or an https page with ws) is blocked (ARCHITECTURE.md 2).
  *
  * Only serving needs the certificate. A build reads none, so it works on a
- * machine that has never run `pnpm setup:certs`, such as CI (D54). The demo
- * (`--mode demo`, D56) has no socket at all, so it needs none even to serve.
+ * machine that has never run `pnpm setup:certs`, such as CI (D54). The web
+ * build (`--mode web`, D60) talks to phones over WebRTC from a public origin,
+ * so it needs none even to serve.
  */
 export default defineConfig(({ command, mode }) => {
-  const demo = mode === 'demo';
+  const web = mode === 'web';
   return {
-    // Relative, so the demo works wherever it is hosted: GitHub Pages serves it
-    // under /phonemote/, a local preview at the root.
-    base: demo ? './' : '/',
-    plugins: [demoTraces()],
+    // Relative, so the web build works wherever it is hosted: GitHub Pages
+    // serves it under /phonemote/, a local preview at the root.
+    base: web ? './' : '/',
+    plugins: [webTraces()],
     build: {
       // Phaser alone is about 1.2 MB minified and cannot be split further, so
       // the default 500 kB warning fired on every build and said nothing.
       chunkSizeWarningLimit: 1600,
+      // Not dist/ itself: emptying it took the web build in dist/web with it,
+      // and the e2e tests with nothing to serve. `build:web` passes its own.
+      outDir: 'dist/lan',
     },
     server: {
       host: '0.0.0.0',
       port: PORTS.game,
       strictPort: true,
-      ...(command === 'serve' && !demo ? { https: devCertificate() } : {}),
+      ...(command === 'serve' && !web ? { https: devCertificate() } : {}),
     },
   };
 });

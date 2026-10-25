@@ -28,20 +28,20 @@ body {
   display: block;
 }
 
-/* The browser demo (ARCHITECTURE.md D56): a header above the canvas, which
+/* The web build (ARCHITECTURE.md D56, D60): a header above the canvas, which
    then fills whatever height is left. */
-body.demo {
+body.web {
   display: flex;
   flex-direction: column;
 }
 
-body.demo #app {
+body.web #app {
   flex: 1;
   min-height: 0;
   height: auto;
 }
 
-.demo-banner {
+.web-banner {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -54,22 +54,22 @@ body.demo #app {
   line-height: 1.5;
 }
 
-.demo-banner p {
+.web-banner p {
   margin: 0;
 }
 
-.demo-banner strong,
-.demo-banner b {
+.web-banner strong,
+.web-banner b {
   color: var(--fg);
 }
 
-.demo-banner .demo-keys {
+.web-banner .web-keys {
   display: flex;
   flex-wrap: wrap;
   gap: 0.15rem 1.2rem;
 }
 
-.demo-banner kbd {
+.web-banner kbd {
   display: inline-block;
   min-width: 1.5em;
   padding: 0 0.3em;
@@ -82,24 +82,18 @@ body.demo #app {
   text-align: center;
 }
 
-.demo-banner .demo-links {
+.web-banner .web-links {
   display: flex;
   gap: 1rem;
   margin-left: auto;
 }
 
-.demo-banner a {
+.web-banner a {
   color: #2ed573;
 }
 
-body.demo .debug-overlay {
-  top: calc(var(--demo-banner-height, 4rem) + 12px);
-}
-
-.demo-banner a[aria-current='page'] {
-  color: var(--fg);
-  font-weight: 600;
-  text-decoration: none;
+body.web .debug-overlay {
+  top: calc(var(--web-banner-height, 4rem) + 12px);
 }
 
 .debug-overlay {
