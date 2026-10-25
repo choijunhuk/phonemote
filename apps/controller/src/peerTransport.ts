@@ -30,8 +30,8 @@ export interface PeerTransportOptions {
 }
 
 const RETRY_MS = 1500;
-/** How long to try a room the broker says does not exist. */
-const ABSENT_ROOM_TIMEOUT_MS = 6000;
+/** How long to keep calling a room the broker says does not exist. */
+const ABSENT_ROOM_GRACE_MS = 6000;
 /** Calls in a row that never got through before a first join, before giving up. */
 const MAX_FAILED_CALLS = 4;
 
@@ -85,18 +85,28 @@ export class PeerTransport implements ControllerLink {
 
   private async call(): Promise<void> {
     this.handlers.onState(this.everJoined ? 'reconnecting' : 'connecting');
+    const started = performance.now();
+    const since = (): string => `${Math.round(performance.now() - started)} ms`;
     try {
       const signaling = await this.openSignaling();
-      // A room announces its code. When the broker says nobody holds this
-      // one, the call is still tried — a wrong "no" would lock the phone out —
-      // but briefly, so a mistyped code fails in seconds, not after retries.
-      const present = await signaling.exists?.(hostAddress(this.roomCode));
-      const link = await dial(signaling, hostAddress(this.roomCode), {
-        iceServers: this.options.iceServers,
-        ...(present === false ? { timeoutMs: ABSENT_ROOM_TIMEOUT_MS } : {}),
-      }).catch((error: unknown) => {
-        throw present === false ? new RoomNotFoundError() : error;
-      });
+      console.info(`[link] signaling open after ${since()}`);
+      const room = hostAddress(this.roomCode);
+      // The room's claim is looked up while the call is already being made:
+      // waiting for the lookup first added up to five seconds to every join.
+      // When the broker confirms nobody holds the code, the call is still
+      // given a few seconds — a wrong "no" must not lock a phone out — and
+      // then abandoned, so a mistyped code fails in seconds, not after retries.
+      const lookup = signaling.exists?.(room) ?? Promise.resolve(null);
+      const abandon = lookup.then(
+        (present) =>
+          new Promise<Error>((resolve) => {
+            if (present === false) {
+              window.setTimeout(() => resolve(new RoomNotFoundError()), ABSENT_ROOM_GRACE_MS);
+            }
+          }),
+      );
+      const link = await dial(signaling, room, { iceServers: this.options.iceServers, abandon });
+      console.info(`[link] channels open after ${since()}`);
       if (this.closedByUs) {
         link.connection.close();
         return;
@@ -104,6 +114,7 @@ export class PeerTransport implements ControllerLink {
       this.adopt(link);
     } catch (error) {
       if (this.closedByUs) return;
+      console.info(`[link] call failed after ${since()}: ${String(error)}`);
       if (error instanceof RoomNotFoundError) {
         this.giveUp(
           this.everJoined

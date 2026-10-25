@@ -57,9 +57,15 @@ export class LinkTimeoutError extends Error {
 export interface LinkOptions {
   readonly iceServers: readonly RTCIceServer[];
   readonly timeoutMs?: number;
+  /** Give up as soon as this settles, with the error it carries. */
+  readonly abandon?: Promise<Error>;
 }
 
-const DEFAULT_TIMEOUT_MS = 15_000;
+/**
+ * Once an offer and answer have crossed, a data channel opens in a second or
+ * three; waiting much longer only delays the retry.
+ */
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
@@ -124,6 +130,8 @@ export function dial(signaling: Signaling, hostId: string, options: LinkOptions)
         resolve({ connection, control, sensor });
       }
     }
+
+    void options.abandon?.then((error) => finish(error));
 
     stopListening = signaling.onMessage((from, message) => {
       if (from !== hostId) return;
