@@ -40,3 +40,51 @@ jobs:
       # A fresh checkout has no certs/ directory, so this also proves the
       # apps build without the local dev certificate.
       - run: pnpm build
+
+  e2e:
+    name: End-to-end (browser demo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @phonemote/game exec playwright install --with-deps chromium
+      - run: pnpm --filter @phonemote/game build:demo
+      # Every game, every mode, thirty seconds each, in a real browser.
+      - run: pnpm --filter @phonemote/game test:e2e
+
+      - name: Keep the report and screenshots of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-report
+          path: |
+            apps/game/dist/e2e-report
+            apps/game/dist/e2e-screens
+
+      # The files the test just played are the files that get deployed.
+      - name: Hand the tested build to Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: apps/game/dist/demo
+
+  deploy-demo:
+    name: Deploy the browser demo
+    needs: [check, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

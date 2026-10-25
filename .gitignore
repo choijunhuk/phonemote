@@ -48,3 +48,6 @@ traces/*
 
 # recorded measurement sessions
 logs/
+
+# screenshots and logs from the Playwright MCP browser tool
+.playwright-mcp/

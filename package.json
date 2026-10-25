@@ -16,7 +16,9 @@
     "lint": "eslint .",
     "setup:certs": "bash scripts/setup-certs.sh",
     "build": "pnpm -r build",
-    "play": "pnpm --filter @phonemote/controller build && pnpm -r --parallel play"
+    "play": "pnpm --filter @phonemote/controller build && pnpm -r --parallel play",
+    "demo": "pnpm --filter @phonemote/game build:demo && pnpm --filter @phonemote/game preview:demo",
+    "test:e2e": "pnpm --filter @phonemote/game build:demo && pnpm --filter @phonemote/game test:e2e"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
