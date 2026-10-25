@@ -445,9 +445,10 @@ ${controls}`;
     if (!this.scene.isActive()) return;
 
     const { width, height } = this.scale;
-    this.add.image(width * 0.26, height * 0.72, key).setDisplaySize(200, 200);
+    // Clear of the two-line hint at the bottom, which the address used to touch.
+    this.add.image(width * 0.26, height * 0.7, key).setDisplaySize(200, 200);
     this.add
-      .text(width * 0.26, height * 0.88, shortUrl(controllerUrl), {
+      .text(width * 0.26, height * 0.85, shortUrl(controllerUrl), {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '20px',
         color: '#98a0b3',

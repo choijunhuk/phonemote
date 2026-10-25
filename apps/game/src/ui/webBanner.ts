@@ -24,7 +24,7 @@ export function showWebBanner(): void {
       the motion controller. No app, no install. No phone at hand? Press <kbd>N</kbd> in the lobby
       for a keyboard player.
     </p>
-    <p class="web-keys"><b>Keyboard</b> ${KEYS}</p>
+    <p class="web-keys"><b>Keyboard</b> <span>${KEYS}</span></p>
     <nav class="web-links"><a href="${SOURCE_URL}">Source on GitHub</a></nav>`;
 
   document.body.classList.add('web');
