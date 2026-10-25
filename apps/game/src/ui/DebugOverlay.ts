@@ -16,14 +16,21 @@ function pad(value: number, digits = 1): string {
   return value.toFixed(digits).padStart(8);
 }
 
+export interface DebugOverlayOptions {
+  /** Start hidden; Alt+D shows it. */
+  readonly hidden?: boolean;
+}
+
 export class DebugOverlay {
   private readonly element = document.createElement('pre');
   private selected = 1;
-  private visible = true;
+  private visible: boolean;
   private timer: number | null = null;
 
-  constructor(parent: HTMLElement = document.body) {
+  constructor(parent: HTMLElement = document.body, options: DebugOverlayOptions = {}) {
     this.element.className = 'debug-overlay';
+    this.visible = options.hidden !== true;
+    this.element.style.display = this.visible ? 'block' : 'none';
     parent.append(this.element);
 
     // Alt again: the bare digits are the lobby's launch keys and the fourth
@@ -49,9 +56,16 @@ export class DebugOverlay {
   private render(): void {
     if (!this.visible) return;
 
-    const info = session.debugInfo(this.selected);
+    // The digit is a player id, the way the relay numbers phones. Keyboard
+    // stand-ins and replays outside the demo have ids far from 1-4, so fall
+    // back to the Nth player in the room rather than showing nothing at all.
+    const players = session.players;
+    const player =
+      players.find((candidate) => candidate.id === this.selected) ?? players[this.selected - 1];
+    const id = player?.id ?? this.selected;
+    const info = session.debugInfo(id);
     const header =
-      `player ${this.selected}  (alt+1-4 to switch, alt+d to hide)` +
+      `P${id}${player ? ` ${player.name}` : ''}  (alt+1-4 to switch, alt+d to hide)` +
       (session.status ? `
 장면     ${session.status}` : '') +
       (session.lastError ? `

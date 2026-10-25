@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import QRCode from 'qrcode';
+import { DEMO } from '../demo.js';
 import { session } from '../session.js';
 import {
   GAMES,
@@ -30,7 +31,14 @@ interface Tile {
   readonly centre: { x: number; y: number };
   /** Which of this game's modes is chosen. Left and right move through them. */
   mode: number;
+  /** Set once somebody picks a mode; until then the mode follows the room. */
+  picked: boolean;
+  /** What the mode chip says now, so it is only re-fitted when that changes. */
+  label: string;
 }
+
+const MODE_FONT_PX = 20;
+const MODE_FONT_MIN_PX = 14;
 
 export class LobbyScene extends Phaser.Scene {
   private codeText!: Phaser.GameObjects.Text;
@@ -41,6 +49,8 @@ export class LobbyScene extends Phaser.Scene {
   private selected = 0;
   private columns = 1;
   private qrShown = false;
+  /** Players present at the last refresh, to notice the room changing. */
+  private lastPresent = -1;
   private cleanups: Array<() => void> = [];
 
   constructor() {
@@ -53,6 +63,7 @@ export class LobbyScene extends Phaser.Scene {
     // are cleared here. qrShown surviving is why the lobby lost its QR code and
     // its controller URL for the rest of the session after the first game.
     this.qrShown = false;
+    this.lastPresent = -1;
     this.selected = 0;
     this.tiles = [];
     this.slotTexts = [];
@@ -67,16 +78,21 @@ export class LobbyScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
+    // The demo has no room to join (D56), so the space that would hold the
+    // room code says what is standing in for the phones instead.
     this.codeText = this.add
-      .text(width * 0.26, height * 0.2, '연결 중…', {
+      .text(width * 0.26, height * 0.2, DEMO ? 'DEMO' : '연결 중…', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '84px',
         color: '#2ed573',
       })
       .setOrigin(0.5);
 
+    const joinHint = DEMO
+      ? '키보드가 폰 대신 센서 값을 만들어 보냅니다'
+      : '폰 Chrome에서 QR 스캔 또는 룸 코드 입력';
     this.add
-      .text(width * 0.26, height * 0.29, '폰 Chrome에서 QR 스캔 또는 룸 코드 입력', {
+      .text(width * 0.26, height * 0.29, joinHint, {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '24px',
         color: '#98a0b3',
@@ -101,6 +117,11 @@ export class LobbyScene extends Phaser.Scene {
       session.onPlayersChanged(() => this.refresh()),
       session.onAction((action) => {
         if (action.kind === 'pointer_move') {
+          // A keyboard stand-in's arrows already move the focus directly, and
+          // its synthesized pointer moving at the same time dragged the
+          // selection to whichever tile the cursor drifted nearest: pressing →
+          // to change mode also jumped to the next game.
+          if (session.isLocal(action.playerId)) return;
           this.cursor.setPosition(action.x * this.scale.width, action.y * this.scale.height);
           this.selectNearest(this.cursor.x, this.cursor.y);
           return;
@@ -207,15 +228,14 @@ export class LobbyScene extends Phaser.Scene {
         .setOrigin(0, 0);
       // The mode line is the whole point of the redesign: it is where a player
       // sees that practice exists at all.
+      // Not wrapped: a one-line wrap dropped whatever did not fit, which on
+      // "◀ 타임 트라이얼 ▶" was the arrow that says there is another mode.
+      // refresh() shrinks the font instead.
       const modeText = this.add
         .text(-tileWidth / 2 + 18, tileHeight / 2 - 30, '', {
           fontFamily: 'system-ui, sans-serif',
-          fontSize: '20px',
+          fontSize: `${MODE_FONT_PX}px`,
           color: '#2ed573',
-          // The whole tile width: the player count moved up to the title line,
-          // so a mode name like "드라이빙 레인지" has room to be itself.
-          wordWrap: { width: tileWidth - 36 },
-          maxLines: 1,
         })
         .setOrigin(0, 0);
 
@@ -230,6 +250,8 @@ export class LobbyScene extends Phaser.Scene {
           0,
           game.modes.indexOf(defaultMode(game, session.presentPlayers.length)),
         ),
+        picked: false,
+        label: '',
         container: this.add.container(centre.x, centre.y, [panel, title, blurb, modeText]),
       };
     });
@@ -256,6 +278,7 @@ export class LobbyScene extends Phaser.Scene {
     if (!tile) return;
     const count = tile.game.modes.length;
     tile.mode = (tile.mode + step + count) % count;
+    tile.picked = true;
   }
 
   private modeOf(tile: Tile): GameMode | undefined {
@@ -300,13 +323,15 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   private refresh(): void {
-    const room = session.room;
-    this.codeText.setText(room ? room.roomCode : '연결 중…');
-    this.codeText.setColor(room ? '#2ed573' : '#ff4757');
+    if (!DEMO) {
+      const room = session.room;
+      this.codeText.setText(room ? room.roomCode : '연결 중…');
+      this.codeText.setColor(room ? '#2ed573' : '#ff4757');
 
-    if (room && !this.qrShown) {
-      this.qrShown = true;
-      void this.showQr(room.controllerUrl);
+      if (room && !this.qrShown) {
+        this.qrShown = true;
+        void this.showQr(room.controllerUrl);
+      }
     }
 
     const players = session.players;
@@ -322,6 +347,18 @@ export class LobbyScene extends Phaser.Scene {
     });
 
     const present = session.presentPlayers.length;
+    if (present !== this.lastPresent) {
+      this.lastPresent = present;
+      // The menu is built before anyone has joined — phones always arrive after
+      // the lobby is on screen — so the default chosen then was the default for
+      // nobody: one player landed on a two-player mode. It follows the room
+      // until somebody picks a mode themselves.
+      for (const tile of this.tiles) {
+        if (!tile.picked) {
+          tile.mode = Math.max(0, tile.game.modes.indexOf(defaultMode(tile.game, present)));
+        }
+      }
+    }
     this.tiles.forEach((tile, index) => {
       const chosen = index === this.selected;
       tile.panel.setStrokeStyle(chosen ? 3 : 2, chosen ? 0x2ed573 : 0x2c3242);
@@ -337,23 +374,39 @@ export class LobbyScene extends Phaser.Scene {
       // The chip carries the name only. At nine games a tile is 210px wide and
       // a mode's description does not fit beside it; the description goes to
       // the full-width line at the bottom, for whichever tile has focus.
-      tile.modeText
-        .setText(label)
-        .setColor(short || many ? '#6f7994' : chosen ? '#2ed573' : '#98a0b3');
+      if (label !== tile.label) {
+        tile.label = label;
+        this.fitLabel(tile.modeText.setText(label), tile.panel.width - 36);
+      }
+      tile.modeText.setColor(short || many ? '#6f7994' : chosen ? '#2ed573' : '#98a0b3');
     });
 
-    this.cursor.setVisible(players.length > 0);
+    // Only a phone moves the cursor; keyboard players drive the focus itself.
+    this.cursor.setVisible(players.some((player) => !session.isLocal(player.id)));
     this.hintText.setText(this.hint(present));
+  }
+
+  /** The largest font, down to a floor, at which a one-line label fits. */
+  private fitLabel(text: Phaser.GameObjects.Text, maxWidth: number): void {
+    let size = MODE_FONT_PX;
+    text.setFontSize(size);
+    while (text.width > maxWidth && size > MODE_FONT_MIN_PX) {
+      size -= 1;
+      text.setFontSize(size);
+    }
   }
 
   /** What the focused game's chosen mode is, then how to drive the menu. */
   private hint(present: number): string {
     const tile = this.tiles[this.selected];
     const mode = tile ? this.modeOf(tile) : undefined;
+    const players = session.players;
     const controls =
-      session.players.length === 0
+      players.length === 0
         ? '폰을 연결하거나, 키보드 ↑↓←→ + Enter   ·   숫자키 1~9로 바로 시작'
-        : '고르고 A로 시작   ·   ←→ 모드   ·   B 다음   ·   숫자키 1~9';
+        : players.every((player) => session.isLocal(player.id))
+          ? '↑↓ 게임   ·   ←→ 모드   ·   Enter 또는 Z(A)로 시작   ·   숫자키 1~9'
+          : '고르고 A로 시작   ·   ←→ 모드   ·   B 다음   ·   숫자키 1~9';
     if (!tile || !mode) return controls;
 
     const why =

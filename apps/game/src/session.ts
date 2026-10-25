@@ -79,6 +79,8 @@ export class GameSession {
   private readonly sensorChangedAt = new Map<number, number>();
   private readonly stalledSince = new Map<number, number>();
   private readonly accelHistory = new Map<number, Array<{ at: number; magnitude: number }>>();
+  /** Keyboard stand-ins and replayed traces: players with no phone behind them. */
+  private readonly localPlayers = new Set<number>();
 
   /**
    * One mapper for the life of the session. Rebuilding it per scene threw away
@@ -199,7 +201,18 @@ export class GameSession {
    * exercise is the real thing rather than a parallel implementation.
    */
   addLocalPlayer(player: PlayerInfo): void {
+    this.localPlayers.add(player.id);
     this.registerPlayer(player);
+  }
+
+  /**
+   * Whether this player is driven from this machine rather than by a phone.
+   *
+   * The lobby needs it: the keyboard already moves the menu focus directly, so
+   * the pointer a keyboard stand-in synthesizes would only fight it.
+   */
+  isLocal(playerId: number): boolean {
+    return this.localPlayers.has(playerId);
   }
 
   injectFrame(frame: SensorFrame): void {

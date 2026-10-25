@@ -1,4 +1,6 @@
 import Phaser from 'phaser';
+import { DEMO } from './demo.js';
+import { GAMES } from './games.js';
 import { CalibrationScene } from './scenes/CalibrationScene.js';
 import { LobbyScene } from './scenes/LobbyScene.js';
 import { gameScenes } from './sceneTable.js';
@@ -6,6 +8,7 @@ import { session } from './session.js';
 import { AxisRecorder } from './ui/AxisRecorder.js';
 import { unlockAudio } from './ui/audio.js';
 import { DebugOverlay } from './ui/DebugOverlay.js';
+import { showDemoBanner } from './ui/demoBanner.js';
 
 /**
  * Game entry point. The session owns the socket and the input pipeline; scenes
@@ -17,23 +20,28 @@ import { DebugOverlay } from './ui/DebugOverlay.js';
 window.addEventListener('error', (event) => session.reportError(event.error ?? event.message));
 window.addEventListener('unhandledrejection', (event) => session.reportError(event.reason));
 
-session.start();
+// The demo has no relay to connect to (D56): its players are keyboards.
+if (!DEMO) session.start();
 // The first sound this game makes is a ball being hit by a phone, over a
 // socket, with nobody having touched this machine. Chrome will not start an
 // audio context outside a gesture, so one is armed here rather than hoping.
 unlockAudio();
 
-const overlay = new DebugOverlay();
+// Hidden in the demo, where the banner points at it: a wall of numbers is not
+// the first thing somebody arriving from a link should see.
+const overlay = new DebugOverlay(document.body, { hidden: DEMO });
 overlay.start();
 
-// Press r to walk through the axis measurements and post them to the relay.
-new AxisRecorder();
+// Press Alt+R to walk through the axis measurements and post them to the
+// relay. The demo has no relay to post them to.
+if (!DEMO) new AxisRecorder();
 
 // Development stand-ins. Both push frames through the real pipeline rather
 // than faking GameActions, so the game can be played, and a change felt,
-// without a phone in the room.
+// without a phone in the room. In the demo a keyboard player is always there:
+// with no phone and no relay, it is the only way in.
 const params = new URLSearchParams(window.location.search);
-const fake = params.get('fake');
+const fake = params.get('fake') ?? (DEMO ? '1' : null);
 if (fake !== null) {
   void import('./dev/FakeController.js').then((module) => {
     module.startFakeControllers(Number(fake) || 1);
@@ -45,6 +53,8 @@ if (replayName !== null) {
     .then((module) => module.startReplay(replayName))
     .catch((error: unknown) => session.reportError(error));
 }
+
+if (DEMO) showDemoBanner(params);
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -61,13 +71,15 @@ const game = new Phaser.Game({
 });
 
 /**
- * Dev-only handle on the running game.
+ * Handle on the running game, for development and for the demo build.
  *
  * Two things need it. Driving the game from the console — starting a scene,
  * reading its state — is how a rule change gets checked without a phone. And an
  * automated browser can be missing requestAnimationFrame entirely, which stops
- * Phaser's loop dead; `game.step` lets something else drive it instead.
+ * Phaser's loop dead; `game.step` lets something else drive it instead. The
+ * end-to-end test (apps/game/e2e) plays every game through this handle, against
+ * the demo build, so what it checks is what gets deployed.
  */
-if (import.meta.env.DEV) {
-  Object.assign(window, { phonemote: { game, session } });
+if (import.meta.env.DEV || DEMO) {
+  Object.assign(window, { phonemote: { game, session, games: GAMES } });
 }

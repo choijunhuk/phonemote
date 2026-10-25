@@ -5,6 +5,7 @@ import {
   SENSOR_FRAME_VERSION,
   type SensorFrame,
 } from '@phonemote/protocol';
+import { DEMO } from '../demo.js';
 import { session } from '../session.js';
 
 /**
@@ -22,8 +23,12 @@ import { session } from '../session.js';
  */
 
 const FRAME_MS = 1000 / 60;
-/** Well clear of the 1-4 the relay hands out, so it can never collide. */
-const FAKE_ID_BASE = 90;
+/**
+ * Well clear of the 1-4 the relay hands out, so it can never collide. The demo
+ * has no relay and so nothing to collide with, and there the players are
+ * simply P1 and P2 rather than the P90 every scene's labels would print.
+ */
+const FAKE_ID_BASE = DEMO ? 1 : 90;
 
 interface Keymap {
   readonly left: string;
@@ -290,8 +295,11 @@ export function startFakeControllers(count: number): void {
    * running at about 2 Hz — twenty seconds of driving buys one second of game.
    * Feeding frames on a clock of the caller's choosing, alongside `game.step`,
    * runs a whole match in a few milliseconds and makes the result repeatable.
+   *
+   * The demo build keeps it too: it is what the end-to-end test drives, so the
+   * test plays the exact files that get deployed.
    */
-  if (import.meta.env.DEV) {
+  if (import.meta.env.DEV || DEMO) {
     Object.assign(window, {
       phonemoteFake: {
         tick(now: number): void {

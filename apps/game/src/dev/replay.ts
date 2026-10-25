@@ -1,4 +1,5 @@
 import { PLAYER_COLORS, PORTS, decodeSensor, parseTrace } from '@phonemote/protocol';
+import { DEMO } from '../demo.js';
 import { session } from '../session.js';
 
 /**
@@ -13,12 +14,17 @@ import { session } from '../session.js';
  *   ?replay=swing-forward.pmtrace
  *
  * The relay serves the traces because the browser cannot read the directory.
+ * The demo has no relay, so its build ships the committed corpus beside the
+ * page instead (apps/game/vite.config.ts).
  */
 
 const FAKE_ID = 99;
 
 export async function startReplay(name: string): Promise<void> {
-  const url = `https://${window.location.hostname}:${PORTS.relay}/traces/${encodeURIComponent(name)}`;
+  const file = encodeURIComponent(name);
+  const url = DEMO
+    ? `${import.meta.env.BASE_URL}traces/${file}`
+    : `https://${window.location.hostname}:${PORTS.relay}/traces/${file}`;
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Trace ${name} not found (${response.status})`);
 
