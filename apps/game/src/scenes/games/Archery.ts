@@ -1,5 +1,6 @@
 import type Phaser from 'phaser';
 import { session } from '../../session.js';
+import { signed } from '../../ui/format.js';
 import { BaseGameScene } from './BaseGameScene.js';
 import type { CanonicalAngles, GameAction } from '../../input/types.js';
 import { sfx } from '../../ui/audio.js';
@@ -68,13 +69,20 @@ const GOOD = '#2ed573';
 /** World Archery colours, outermost band first. */
 const BAND_COLORS = [0xf1f3f8, 0x20242e, 0x3ba7d8, 0xe14b4b, 0xf2c94c] as const;
 
-const FACE_Y = 236;
-const BAR_Y = 412;
-const NAME_Y = 442;
-const END_Y = 476;
-const READING_Y = 506;
-const GRAPH_TOP = 606;
-const GRAPH_HEIGHT = 56;
+/**
+ * The lane, top to bottom. The face used to sit at 236 with a 178 px radius,
+ * so its top edge covered the status line at y 48-80 (the "last shot" callout
+ * read as a smudge behind the target) and its bottom edge sat on the draw bar.
+ */
+const FACE_Y = 262;
+const FACE_RADIUS_MATCH = 168;
+const FACE_RADIUS_PRACTICE = 144;
+const BAR_Y = 448;
+const NAME_Y = 474;
+const END_Y = 506;
+const READING_Y = 536;
+const GRAPH_TOP = 626;
+const GRAPH_HEIGHT = 52;
 
 /**
  * Slow motion for the aim replay.
@@ -349,7 +357,10 @@ export class Archery extends BaseGameScene {
     const columnWidth = width / Math.max(1, players.length);
     // Practice gives the bottom third of the lane to the shake graph, so the
     // face is smaller there than in a match.
-    const radius = Math.min(columnWidth * 0.32, this.archeryMode === 'practice' ? 150 : 178);
+    const radius = Math.min(
+      columnWidth * 0.32,
+      this.archeryMode === 'practice' ? FACE_RADIUS_PRACTICE : FACE_RADIUS_MATCH,
+    );
     const barWidth = columnWidth - 96;
     const graphWidth = columnWidth - 70;
 
@@ -778,10 +789,6 @@ export class Archery extends BaseGameScene {
           : `${name} 우승 — ${totalScore(best)} / ${perfect}점`;
     this.bannerText.setText(`경기 종료\n${headline}`).setVisible(true);
   }
-}
-
-function signed(value: number): string {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}`;
 }
 
 function clampAbs(value: number, limit: number): number {

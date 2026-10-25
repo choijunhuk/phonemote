@@ -126,10 +126,13 @@ export class StatueRace extends BaseGameScene {
       })
       .setOrigin(0.5, 0);
 
+    // Wrapped short of the title: the practice drill's two-line description
+    // ran straight through "STATUE RACE" at full width.
     this.modeText = this.add.text(18, 18, '', {
       fontFamily: 'system-ui, sans-serif',
       fontSize: '22px',
       color: DIM,
+      wordWrap: { width: width / 2 - 150 },
     });
 
     const lights: StatueLight[] = ['green', 'amber', 'red'];
@@ -149,22 +152,25 @@ export class StatueRace extends BaseGameScene {
       })
       .setOrigin(0.5, 0);
 
+    // The bottom two lines are anchored by their bottoms. The last one used to
+    // hang from height - 20 by its top, so its lower half was off the canvas and
+    // its upper half was under this one.
     this.waitLine = this.add
-      .text(width / 2, height - 56, '', {
+      .text(width / 2, height - 48, '', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '26px',
         color: '#c3c9d6',
         align: 'center',
       })
-      .setOrigin(0.5, 0);
+      .setOrigin(0.5, 1);
 
     this.add
-      .text(width / 2, height - 20, 'HOME 또는 ESC: 로비', {
+      .text(width / 2, height - 14, 'HOME/ESC: 로비', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '22px',
         color: DIM,
       })
-      .setOrigin(0.5, 0);
+      .setOrigin(0.5, 1);
 
     // Fires immediately with the roster it already has, which is what builds
     // the lanes the first time.

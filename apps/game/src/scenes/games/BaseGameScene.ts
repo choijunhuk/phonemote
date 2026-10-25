@@ -162,8 +162,10 @@ export abstract class BaseGameScene extends Phaser.Scene {
         fontSize: '34px',
         color: '#ffa502',
         align: 'center',
-        backgroundColor: '#0f1116',
-        padding: { x: 18, y: 12 },
+        // A panel, not the page colour: on the page colour the box read as a
+        // hole cut out of whatever it covered, such as a bowling lane.
+        backgroundColor: '#1d2430',
+        padding: { x: 22, y: 14 },
       })
       .setOrigin(0.5)
       .setDepth(1000);

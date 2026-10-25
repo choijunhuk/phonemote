@@ -256,7 +256,7 @@ export const GAMES: readonly GameDefinition[] = [
   {
     key: 'bowling',
     title: 'Bowling',
-    blurb: '자리를 잡고, 트리거를 놓는 순간 굴린다',
+    blurb: '퍼 올리듯 휘둘러 공을 굴린다',
     category: 'sports',
     calibration: false,
     modes: [
@@ -289,7 +289,7 @@ export const GAMES: readonly GameDefinition[] = [
   {
     key: 'golf',
     title: 'Golf',
-    blurb: '드라이버는 1200°/s, 퍼팅은 10도',
+    blurb: '크게 휘둘러 치고, 살살 퍼팅한다',
     category: 'sports',
     calibration: false,
     modes: [

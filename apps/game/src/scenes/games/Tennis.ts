@@ -246,7 +246,7 @@ export class Tennis extends BaseGameScene {
     this.ball = this.add.circle(width / 2, height / 2, 12, 0xf1f3f8);
 
     this.scoreText = this.add
-      .text(width / 2, 18, '0 : 0', {
+      .text(width / 2, 6, '0 : 0', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '40px',
         color: '#f1f3f8',
@@ -384,7 +384,7 @@ export class Tennis extends BaseGameScene {
     const side = this.mySides();
     if (side === 'spectator') return '관전 중 — 테니스는 P1, P2만 칩니다';
     if (this.state.rally >= 3) return `랠리 ${this.state.rally}`;
-    return 'HOME: 로비   ·   밴드가 밝아지면 휘두르기';
+    return '밴드가 밝아지면 휘두르기   ·   HOME/ESC: 로비';
   }
 
   /** Whether anyone in the room is only watching. */

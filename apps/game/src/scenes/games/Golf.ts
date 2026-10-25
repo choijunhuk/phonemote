@@ -1,5 +1,6 @@
 import type Phaser from 'phaser';
 import { session } from '../../session.js';
+import { signed } from '../../ui/format.js';
 import { BaseGameScene } from './BaseGameScene.js';
 import type { GameAction } from '../../input/types.js';
 import { sfx } from '../../ui/audio.js';
@@ -169,10 +170,6 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function signed(value: number, digits: number): string {
-  return `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(digits)}`;
-}
-
 export class Golf extends BaseGameScene {
   private state!: GolfState;
   private field!: Phaser.GameObjects.Graphics;
@@ -266,12 +263,12 @@ export class Golf extends BaseGameScene {
     for (const metres of RANGE_FLAGS_M) {
       this.flagLabels.push(
         this.add
-          .text(6, 0, `${metres}m`, {
+          .text(0, 0, `${metres}m`, {
             fontFamily: 'ui-monospace, monospace',
             fontSize: '22px',
             color: '#c3c9d6',
           })
-          .setOrigin(0, 0.5)
+          .setOrigin(0, 1)
           .setVisible(false),
       );
     }
@@ -515,6 +512,10 @@ export class Golf extends BaseGameScene {
     const cardH = this.cardHeight;
     const centreY = this.scale.height - 10 - cardH / 2;
     const barWidth = cardW - 32;
+    // The practice field is not the card. With one or two players a card-wide
+    // lane was a 300 px strip in the middle of the screen, and every drive more
+    // than 45 m off line was drawn outside it, over the empty background.
+    const laneW = (width - 40 - CARD_GAP * (count - 1)) / count;
 
     players.forEach((player, index) => {
       const color = Number(`0x${player.color.slice(1)}`);
@@ -578,8 +579,8 @@ export class Golf extends BaseGameScene {
         band,
         sweep,
         barWidth,
-        laneX: x - cardW / 2,
-        laneW: cardW,
+        laneX: 20 + index * (laneW + CARD_GAP),
+        laneW,
         colorHex: player.color,
       });
     });
@@ -664,13 +665,16 @@ export class Golf extends BaseGameScene {
         const player = findPlayer(this.state, id);
         if (!card || !player) continue;
         const hole = holeFor(this.state, player);
-        const view = this.viewOf(card.laneX, FIELD_TOP, card.laneW, height, hole);
+        const view = this.viewOf(card.laneX, FIELD_TOP, card.laneW, height, hole, true);
         this.drawHole(view, hole);
         graphics.lineStyle(2, Number(`0x${card.colorHex.slice(1)}`), 0.55);
         graphics.strokeRect(view.x + 1, view.y + 1, view.w - 2, view.h - 2);
         this.drawShots(view, player);
         this.drawBall(view, player);
-        if (this.state.drill === 'range') this.placeFlagLabels(view, hole);
+        // One set of labels, on the first lane; every lane shares the scale.
+        if (this.state.drill === 'range' && id === this.laneOrder[0]) {
+          this.placeFlagLabels(view, hole);
+        }
       }
       return;
     }
@@ -682,14 +686,25 @@ export class Golf extends BaseGameScene {
     for (const player of this.state.players) this.drawBall(view, player);
   }
 
-  private viewOf(x: number, y: number, w: number, h: number, hole: GolfHole): View {
+  /**
+   * `widen` keeps the metres-per-pixel a card-wide lane had and spends the extra
+   * width on seeing further off line, rather than stretching the same corridor.
+   */
+  private viewOf(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    hole: GolfHole,
+    widen = false,
+  ): View {
     const lengthM = Math.max(1, hole.lengthM);
     const alongSpan = lengthM * (1 + ALONG_MARGIN) + 1;
     // A ladder green is as wide as it is long, so the across window comes from
     // the putt itself; on anything else it is the corridor a shot can be played
     // from and still be worth drawing.
-    const halfAcross =
-      hole.greenRadiusM >= lengthM ? Math.max(0.8, lengthM * 0.3) : HALF_ACROSS_M;
+    const corridor = widen ? HALF_ACROSS_M * Math.max(1, w / MAX_CARD_W) : HALF_ACROSS_M;
+    const halfAcross = hole.greenRadiusM >= lengthM ? Math.max(0.8, lengthM * 0.3) : corridor;
     return { x, y, w, h, across: w / (2 * halfAcross), along: h / alongSpan };
   }
 
@@ -774,14 +789,13 @@ export class Golf extends BaseGameScene {
     RANGE_FLAGS_M.forEach((metres, index) => {
       const label = this.flagLabels[index];
       if (!label || metres > hole.lengthM) return;
-      label.setPosition(6, this.vy(view, metres)).setVisible(true);
+      label.setPosition(view.x + 8, this.vy(view, metres) - 2).setVisible(true);
     });
   }
 
   private drawBall(view: View, player: GolfPlayer): void {
     const graphics = this.field;
-    const x = this.vx(view, player.ball.x);
-    const y = this.vy(view, player.ball.y);
+    const { x, y } = this.onField(view, this.vx(view, player.ball.x), this.vy(view, player.ball.y));
     const color = Number(`0x${this.colorOf(player.id).slice(1)}`);
 
     // The intended start line, drawn only while this player may actually hit:
@@ -823,8 +837,9 @@ export class Golf extends BaseGameScene {
       const x = shot.startX + shot.aimX * along + shot.aimY * across;
       const y = shot.startY + shot.aimY * along - shot.aimX * across;
       const newest = index === shots.length - 1;
+      const at = this.onField(view, this.vx(view, x), this.vy(view, y));
       graphics.fillStyle(0xf1f3f8, newest ? 0.95 : 0.4);
-      graphics.fillCircle(this.vx(view, x), this.vy(view, y), newest ? 6 : 4);
+      graphics.fillCircle(at.x, at.y, newest ? 6 : 4);
     });
 
     // Two standard deviations, so about nineteen shots in twenty land inside
@@ -834,12 +849,30 @@ export class Golf extends BaseGameScene {
     const spread = dispersionOf(player);
     if (spread.count < 3) return;
     graphics.lineStyle(2, 0xffffff, 0.5);
-    graphics.strokeEllipse(
+    const centre = this.onField(
+      view,
       this.vx(view, spread.meanLine),
       this.vy(view, spread.meanDistance),
-      Math.max(6, 4 * spread.sdLine * view.across),
-      Math.max(6, 4 * spread.sdDistance * view.along),
     );
+    graphics.strokeEllipse(
+      centre.x,
+      centre.y,
+      Math.min(view.w, Math.max(6, 4 * spread.sdLine * view.across)),
+      Math.min(view.h, Math.max(6, 4 * spread.sdDistance * view.along)),
+    );
+  }
+
+  /**
+   * A point pulled onto the field. A shot past the edge is drawn at the edge,
+   * in the direction it went, rather than over the background or a neighbour's
+   * lane.
+   */
+  private onField(view: View, x: number, y: number): { x: number; y: number } {
+    const margin = 8;
+    return {
+      x: Math.min(view.x + view.w - margin, Math.max(view.x + margin, x)),
+      y: Math.min(view.y + view.h - margin, Math.max(view.y + margin, y)),
+    };
   }
 
   private renderCards(): void {

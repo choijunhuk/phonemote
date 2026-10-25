@@ -872,7 +872,7 @@ export class Ski extends BaseGameScene {
       return `완주를 기다리는 중 — 결승선까지 ${left.toFixed(0)} m`;
     }
 
-    return 'A: 다시 달리기   ·   HOME: 로비 (잠시 뒤 자동으로 돌아갑니다)';
+    return 'A: 다시 달리기   ·   HOME/ESC: 로비 (잠시 뒤 자동으로 돌아갑니다)';
   }
 
   /** What is standing between this room and a run, if anything. */

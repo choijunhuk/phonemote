@@ -119,7 +119,7 @@ export class FreezeFrame extends BaseGameScene {
       .setScale(0, 1);
 
     this.add
-      .text(width / 2, height - 20, 'HOME 또는 ESC: 로비', {
+      .text(width / 2, height - 20, 'HOME/ESC: 로비', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '24px',
         color: '#98a0b3',

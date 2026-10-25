@@ -1,5 +1,6 @@
 import type Phaser from 'phaser';
 import { session } from '../../session.js';
+import { signed } from '../../ui/format.js';
 import { BaseGameScene } from './BaseGameScene.js';
 import type { GameAction } from '../../input/types.js';
 import { sfx } from '../../ui/audio.js';
@@ -666,7 +667,7 @@ export class Bowling extends BaseGameScene {
   private traceLine(trace: Trace): string {
     const aim = trace.aimDeg.toFixed(1).padStart(5);
     const rate = Math.round(trace.rate).toString().padStart(4);
-    const hook = `${trace.hook >= 0 ? '+' : ''}${trace.hook.toFixed(2)}`;
+    const hook = signed(trace.hook, 2);
     const pins = (trace.gutter ? 'G' : String(trace.pinsDown)).padStart(2);
     const source = trace.source === 'release' ? 'T' : 'S';
     return `${aim} ${rate} ${hook} ${pins} ${source}${trace.weak ? '*' : ''}`;
@@ -700,7 +701,7 @@ export class Bowling extends BaseGameScene {
    * own answer, so it lists them.
    */
   private hintLine(): string {
-    if (this.state.players.length === 0) return 'HOME 또는 ESC: 로비';
+    if (this.state.players.length === 0) return 'HOME/ESC: 로비';
     if (this.state.over) {
       const best = leader(this.state);
       const result = best ? `P${best.id} ${best.score}점` : '기록 없음';

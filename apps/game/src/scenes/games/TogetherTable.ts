@@ -1,5 +1,6 @@
 import type Phaser from 'phaser';
 import { session } from '../../session.js';
+import { signed } from '../../ui/format.js';
 import { BaseGameScene } from './BaseGameScene.js';
 import type { GameAction } from '../../input/types.js';
 import { sfx } from '../../ui/audio.js';
@@ -479,8 +480,8 @@ export class TogetherTable extends BaseGameScene {
       return `${names} 기준 잡는 중 — 편한 자세로 들고 잠깐 멈추세요 (${left.toFixed(0)}초 뒤 자동)`;
     }
 
-    if (state.phase === 'cleared') return 'A: 다시   ·   HOME: 로비';
-    if (state.phase === 'failed') return 'A: 다시   ·   HOME: 로비';
+    if (state.phase === 'cleared') return 'A: 다시   ·   HOME/ESC: 로비';
+    if (state.phase === 'failed') return 'A: 다시   ·   HOME/ESC: 로비';
 
     if (state.pause > 0) return '공을 다시 놓는 중…';
 
@@ -539,9 +540,9 @@ export class TogetherTable extends BaseGameScene {
 
   private hint(): string {
     if (this.state.phase === 'cleared' || this.state.phase === 'failed') {
-      return 'A: 다시   ·   HOME 또는 ESC: 로비 (12초 뒤 자동)';
+      return 'A: 다시   ·   HOME/ESC: 로비 (12초 뒤 자동)';
     }
-    return 'A: 자기 기준만 다시 잡기   ·   HOME 또는 ESC: 로비';
+    return 'A: 자기 기준만 다시 잡기   ·   HOME/ESC: 로비';
   }
 
   /**
@@ -829,7 +830,3 @@ export class TogetherTable extends BaseGameScene {
   }
 }
 
-/** Sign always printed, so a column of readings does not jump a character. */
-function signed(value: number): string {
-  return `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(1)}`;
-}
