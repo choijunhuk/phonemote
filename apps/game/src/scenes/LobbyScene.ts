@@ -64,7 +64,10 @@ export class LobbyScene extends Phaser.Scene {
     // its controller URL for the rest of the session after the first game.
     this.qrShown = false;
     this.lastPresent = -1;
-    this.selected = 0;
+    // The focus is the one thing kept on purpose: back from a game, the next
+    // move is to play it again or the one beside it, and starting over at the
+    // first tile made every return a walk across the menu.
+    this.selected = Math.min(Math.max(0, this.selected), GAMES.length - 1);
     this.tiles = [];
     this.slotTexts = [];
     // The pointer drives the menu, so it has to be on before a game is chosen.

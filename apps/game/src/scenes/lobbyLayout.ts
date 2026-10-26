@@ -147,9 +147,12 @@ export function layoutTiles(options: LayoutOptions): readonly Tile[] {
  *
  * Left and right walk the list in reading order rather than staying inside the
  * row: a row of one — count 10 in a grid of three — would otherwise be a dead
- * end in both directions. Up and down move inside the column, skipping to the
- * lowest tile that column actually has, so down and then up is always where you
- * started even when the column is short.
+ * end in both directions. Up and down walk it column by column: down a column,
+ * then on into the top of the next. The lobby gives left and right to the mode,
+ * so up and down are all it has for choosing a game, and when they wrapped
+ * inside their own column six of the nine games could not be reached from the
+ * keyboard at all. Down and then up is still always where you started, even
+ * past a short last row.
  *
  * `columns` is the caller's, not columnsFor's, so a scene that lays out its own
  * grid still moves through it correctly.
@@ -171,16 +174,20 @@ export function moveFocus(
   if (direction === 'left') return (index - 1 + total) % total;
 
   const column = index % perRow;
+  // Columns that hold at least one game: fewer than perRow when the list is short.
+  const columnCount = Math.min(perRow, total);
   if (direction === 'down') {
     const below = index + perRow;
-    // Off the bottom, so back to the top of this column, which always exists:
-    // the column index is never past the tile the focus is already on.
-    return below < total ? below : column;
+    if (below < total) return below;
+    // Off the bottom, so the top of the next column, or back to the very first
+    // game after the last column.
+    return column + 1 < columnCount ? column + 1 : 0;
   }
 
   const above = index - perRow;
   if (above >= 0) return above;
-  let lowest = column;
+  // Off the top, so the lowest game the previous column actually has.
+  let lowest = column > 0 ? column - 1 : columnCount - 1;
   while (lowest + perRow < total) lowest += perRow;
   return lowest;
 }

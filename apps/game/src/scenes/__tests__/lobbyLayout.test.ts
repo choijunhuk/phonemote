@@ -192,17 +192,23 @@ describe('lobby d-pad focus', () => {
     }
   });
 
-  it('reaches every game by holding one direction', () => {
+  it('reaches every game by holding any one direction', () => {
+    // The lobby binds left and right to the mode, so up and down alone have to
+    // reach every game: they used to circle one column, and from the keyboard
+    // six of the nine games could not be selected at all.
     for (const count of COUNTS) {
-      const columns = columnsFor(count);
-      const seen = new Set<number>();
-      let index = 0;
-      for (let press = 0; press < count; press++) {
-        seen.add(index);
-        index = moveFocus(index, count, columns, 'right');
+      for (const columns of [...COLUMN_COUNTS, columnsFor(count)]) {
+        for (const direction of DIRECTIONS) {
+          const seen = new Set<number>();
+          let index = 0;
+          for (let press = 0; press < count; press++) {
+            seen.add(index);
+            index = moveFocus(index, count, columns, direction);
+          }
+          expect(seen.size).toBe(count);
+          expect(index).toBe(0);
+        }
       }
-      expect(seen.size).toBe(count);
-      expect(index).toBe(0);
     }
   });
 
@@ -213,12 +219,24 @@ describe('lobby d-pad focus', () => {
     expect(moveFocus(0, 12, 3, 'right')).toBe(1);
   });
 
-  it('drops to the lowest game a short column actually has', () => {
-    // Ten games in three columns: the last row holds index 9 alone, so up from
-    // the top of the middle column is 7, not the 10 that is not there.
-    expect(moveFocus(1, 10, 3, 'up')).toBe(7);
-    expect(moveFocus(7, 10, 3, 'down')).toBe(1);
-    expect(moveFocus(0, 10, 3, 'up')).toBe(9);
+  it('runs off the bottom of a column into the top of the next one', () => {
+    // Nine games in three columns, as the lobby has them: down walks Statue Race,
+    // Alpine Ski, Freeze Frame, then carries on at the top of the middle column.
+    const order = [0, 3, 6, 1, 4, 7, 2, 5, 8];
+    order.forEach((index, step) => {
+      const next = order[(step + 1) % order.length];
+      expect(moveFocus(index, 9, 3, 'down')).toBe(next);
+      expect(moveFocus(next ?? 0, 9, 3, 'up')).toBe(index);
+    });
+  });
+
+  it('skips the gap a short last row leaves', () => {
+    // Ten games in three columns: the last row holds index 9 alone, so the
+    // middle and right columns end a row higher than the left one.
+    expect(moveFocus(9, 10, 3, 'down')).toBe(1);
+    expect(moveFocus(7, 10, 3, 'down')).toBe(2);
+    expect(moveFocus(1, 10, 3, 'up')).toBe(9);
+    expect(moveFocus(0, 10, 3, 'up')).toBe(8);
   });
 
   it('stays on the only game there is', () => {

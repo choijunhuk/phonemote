@@ -197,6 +197,43 @@ test('N in the lobby seats keyboard players in the room', async ({ page }) => {
   expect(problems).toEqual([]);
 });
 
+test('the arrow keys reach a game outside the first column', async ({ page }) => {
+  // Left and right change the mode, so down is the only way across the grid.
+  // It used to circle the first column, and Bowling, the middle of the grid,
+  // could not be started from the keyboard at all.
+  const problems = watchForProblems(page);
+  await page.goto('./?signal=local');
+  await waitForLobby(page, 0);
+  // The loop is stepped by hand, as in every other test here, and each key gets
+  // frames of its own: Phaser reads one press of a key per frame, so presses
+  // queued inside a single frame would count as one.
+  await page.evaluate(() => {
+    const w = window as TestWindow;
+    w.phonemote?.game.loop.sleep();
+    w.e2e = { now: performance.now(), frame: 0, reached: false, left: false };
+  });
+  const press = async (key: string): Promise<void> => {
+    await page.keyboard.press(key);
+    await page.evaluate((frameMs) => {
+      const w = window as TestWindow;
+      const game = w.phonemote?.game;
+      const state = w.e2e;
+      if (!game || !state) throw new Error('the page handles are missing');
+      for (let frame = 0; frame < 3; frame++) {
+        game.step(state.now, frameMs);
+        state.now += frameMs;
+      }
+    }, FRAME_MS);
+  };
+  for (let count = 0; count < 4; count++) await press('ArrowDown');
+  await press('Enter');
+  const active = await page.evaluate(() =>
+    (window as TestWindow).phonemote?.game.scene.isActive('bowling'),
+  );
+  expect(active, 'four presses of down and Enter should start Bowling').toBe(true);
+  expect(problems).toEqual([]);
+});
+
 test('a recorded phone trace replays from beside the page', async ({ page }) => {
   const problems = watchForProblems(page);
   await page.goto('./?signal=local&replay=real-swing.pmtrace');
