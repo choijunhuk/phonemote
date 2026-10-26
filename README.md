@@ -12,7 +12,10 @@ to the game over a direct WebRTC connection, and you swing, tilt and aim it like
 No phone at hand? Press <kbd>N</kbd> in the lobby for a keyboard player that synthesizes the same
 raw sensor frames.
 
-![The lobby: room code, QR code for the phones, and nine games](docs/images/lobby.png)
+![A Galaxy S24 joins a room by QR code, then two keyboard players play bowling, tennis and archery](docs/images/demo.gif)
+
+<sub>A real Galaxy S24 joining over WebRTC in 3.2 s. The games after it are played by keyboard
+stand-ins, which send the same raw sensor frames a phone does.</sub>
 
 | Tennis | Bowling | Archery |
 |---|---|---|
@@ -46,7 +49,7 @@ flowchart LR
 
 ## Engineering notes
 
-The design document, [ARCHITECTURE.md](ARCHITECTURE.md), records 62 decisions (D1–D62), most of
+The design document, [ARCHITECTURE.md](ARCHITECTURE.md), records 63 decisions (D1–D63), most of
 them settled by measuring a real phone rather than by reasoning. A few of them:
 
 - **The sensor axes were measured, not assumed (D27).** Chrome's `rotationRate` did not follow the
@@ -71,6 +74,11 @@ them settled by measuring a real phone rather than by reasoning. A few of them:
   every channel at once, phones call on all of them, duplicates are dropped, and a channel that
   connects late is replayed the last 15 s of messages. That took the first successful join from a
   15 s timeout plus a retry down to 6.5 s.
+- **A relay that does TURN's job over one HTTPS port (D63).** Public signaling alone still left
+  joins between 6.5 and 35 s, and a network without a direct route could not join at all. The
+  PhoneMote server now carries the handshake first and, when WebRTC fails, tunnels the phone to the
+  room page over a WebSocket on 443. Measured on a Galaxy S24: a direct link in 3.4 s at 60 Hz and
+  30 ms round trip, and through the relay in 0.24 s at 60 Hz and 37 ms.
 - **Every game is played in a real browser on every push (D57).** Playwright runs all nine games in
   every mode for 30 s of game time, plus phones joining over a real `RTCPeerConnection`. The game
   loop is stepped on a synthetic clock, so a run is deterministic and takes about 45 s. The build
@@ -97,15 +105,16 @@ angle, hand shake. A player who cannot see what they did cannot fix it.
 
 TypeScript (strict, `noUncheckedIndexedAccess`, no `any`) · Phaser 3 · Vite · WebRTC data channels
 · MQTT 3.1.1 and the PeerJS signaling protocol, both implemented directly · Node + `ws` for the LAN
-relay · Vitest (688 tests) · Playwright (30 end-to-end tests) · GitHub Actions and GitHub Pages ·
-pnpm workspaces
+relay and the PhoneMote server · Docker and nginx · Vitest (698 tests) · Playwright (31 end-to-end
+tests) · GitHub Actions and GitHub Pages · pnpm workspaces
 
 ```
 packages/protocol   wire format, binary codec, room rules (shared by relay and web host)
-packages/peer       WebRTC links and signaling: MQTT, PeerJS, fan-out
+packages/peer       WebRTC links and signaling: the PhoneMote server, MQTT, PeerJS, fan-out
 apps/game           the game: input pipeline, nine Phaser games, the web host
 apps/controller     the page that runs on the phone
-apps/server         the LAN relay, plus trace recording and analysis tools
+apps/server         the LAN relay, the PhoneMote server, trace recording and analysis tools
+deploy/coms         the PhoneMote server's container and its one nginx location
 traces/corpus       recorded and synthetic sensor traces used by the tests
 ```
 
