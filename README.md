@@ -49,7 +49,7 @@ flowchart LR
 
 ## Engineering notes
 
-The design document, [ARCHITECTURE.md](ARCHITECTURE.md), records 63 decisions (D1–D63), most of
+The design document, [ARCHITECTURE.md](ARCHITECTURE.md), records 64 decisions (D1–D64), most of
 them settled by measuring a real phone rather than by reasoning. A few of them:
 
 - **The sensor axes were measured, not assumed (D27).** Chrome's `rotationRate` did not follow the
@@ -77,8 +77,15 @@ them settled by measuring a real phone rather than by reasoning. A few of them:
 - **A relay that does TURN's job over one HTTPS port (D63).** Public signaling alone still left
   joins between 6.5 and 35 s, and a network without a direct route could not join at all. The
   PhoneMote server now carries the handshake first and, when WebRTC fails, tunnels the phone to the
-  room page over a WebSocket on 443. Measured on a Galaxy S24: a direct link in 3.4 s at 60 Hz and
-  30 ms round trip, and through the relay in 0.24 s at 60 Hz and 37 ms.
+  room page over a WebSocket on 443. Measured on a Galaxy S24: through the relay alone, joined in
+  0.24 s at 60 Hz and 37 ms round trip.
+- **The last 2.5 s of every join was a wait for nothing (D64).** Timing the phone's join step by
+  step showed 2.6 s of a 3.2 s join spent "opening signaling", although the server's channel was
+  open in 0.1 s: the fan-out waited for the slower brokers before calling. A room still needs that
+  wait, to catch a taken code on any channel, but a phone does not, because late channels are
+  replayed what was sent. Phones now call as soon as one channel is open, and a lookup only
+  believes "no room" once the slower channels have answered too. Tap to joined went from 3.2–3.4 s
+  to 0.7–1.3 s over seven runs on the same phone and network.
 - **Every game is played in a real browser on every push (D57).** Playwright runs all nine games in
   every mode for 30 s of game time, plus phones joining over a real `RTCPeerConnection`. The game
   loop is stepped on a synthetic clock, so a run is deterministic and takes about 45 s. The build

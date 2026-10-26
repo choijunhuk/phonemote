@@ -22,9 +22,22 @@ const DEDUPE_WINDOW_MS = 60_000;
  * call waited out its 15 s timeout and only the retry got through.
  */
 const BACKLOG_MS = 15_000;
-/** After the first channel opens, how long to wait for the rest before going ahead. */
-const STRAGGLER_GRACE_MS = 2500;
+/** After the first channel opens, how long a room waits for the rest before going ahead. */
+export const STRAGGLER_GRACE_MS = 2500;
+/** How long a lookup waits for channels still connecting before it believes a no. */
+const LOOKUP_GRACE_MS = 2500;
 const REOPEN_MS = 5000;
+
+export interface FanoutOptions {
+  /**
+   * How long to wait for the other channels once one has opened. A room needs
+   * it: a code already taken on a slow channel has to be caught before the
+   * code is shown. A phone does not: what it sends is replayed to channels
+   * that open later, and a lookup waits for them on its own. Measured on a real
+   * phone, this wait was 2.5 s of a 3.2 s join.
+   */
+  readonly stragglerGraceMs?: number;
+}
 
 function messageKey(from: string, message: SignalMessage): string {
   switch (message.kind) {
@@ -45,12 +58,17 @@ export class FanoutSignaling implements Signaling {
     [];
   private readonly messageListeners = new Set<(from: string, message: SignalMessage) => void>();
   private readonly closeListeners = new Set<() => void>();
+  /** Each channel's latest attempt to open: true once open, false if it failed. */
+  private readonly opening = new Map<Signaling, Promise<boolean>>();
+  private readonly stragglerGraceMs: number;
   private closedByUs = false;
 
   constructor(
     readonly id: string,
     private readonly channels: readonly Signaling[],
+    options: FanoutOptions = {},
   ) {
+    this.stragglerGraceMs = options.stragglerGraceMs ?? STRAGGLER_GRACE_MS;
     for (const channel of channels) {
       channel.onMessage((from, message) => this.deliver(from, message));
       channel.onClose(() => this.lost(channel));
@@ -81,31 +99,35 @@ export class FanoutSignaling implements Signaling {
           pending--;
           continue;
         }
-        channel
-          .open()
-          .then(() => {
+        const attempt = channel.open().then(
+          () => {
             if (this.closedByUs) {
               channel.close();
-              return;
+              return false;
             }
             this.adopt(channel);
-            grace ??= setTimeout(finish, STRAGGLER_GRACE_MS);
-          })
-          .catch((error: unknown) => {
+            if (this.stragglerGraceMs <= 0) finish();
+            else grace ??= setTimeout(finish, this.stragglerGraceMs);
+            return true;
+          },
+          (error: unknown) => {
             const failure = error instanceof Error ? error : new Error(String(error));
             if (failure instanceof AddressTakenError && !settled) {
               // A collision on any channel is a collision: somebody holds this code.
               settled = true;
               this.close();
               reject(failure);
-              return;
+              return false;
             }
             errors.push(failure);
-          })
-          .finally(() => {
-            pending--;
-            if (pending === 0) finish();
-          });
+            return false;
+          },
+        );
+        this.opening.set(channel, attempt);
+        void attempt.finally(() => {
+          pending--;
+          if (pending === 0) finish();
+        });
       }
       if (pending === 0) finish();
     });
@@ -113,14 +135,37 @@ export class FanoutSignaling implements Signaling {
 
   /**
    * Whether a room holds this address, by whichever channels can say.
-   * One yes is enough; it takes every channel that can answer to say no.
+   * One yes is enough; it takes every channel that can answer to say no, so a
+   * no waits a moment for the channels that were still connecting.
    */
   async exists(address: string): Promise<boolean | null> {
-    const answers = await Promise.all(
-      [...this.open_].map((channel) => channel.exists?.(address) ?? Promise.resolve(null)),
-    );
+    const asked = new Set<Signaling>();
+    const ask = (channels: readonly Signaling[]): Promise<Array<boolean | null>> => {
+      for (const channel of channels) asked.add(channel);
+      return Promise.all(
+        channels.map((channel) => channel.exists?.(address) ?? Promise.resolve(null)),
+      );
+    };
+
+    const answers = await ask([...this.open_]);
+    if (answers.includes(true)) return true;
+    const late = await this.openWithin(LOOKUP_GRACE_MS, asked);
+    if (late.length > 0) answers.push(...(await ask(late)));
     if (answers.includes(true)) return true;
     return answers.includes(false) ? false : null;
+  }
+
+  /** The channels, other than these, that are open now or open within this time. */
+  private async openWithin(ms: number, skip: ReadonlySet<Signaling>): Promise<Signaling[]> {
+    const waiting = [...this.opening].filter(([channel]) => !skip.has(channel));
+    if (waiting.length === 0) return [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    });
+    await Promise.race([Promise.all(waiting.map(([, attempt]) => attempt)), timeout]);
+    clearTimeout(timer);
+    return waiting.map(([channel]) => channel).filter((channel) => this.open_.has(channel));
   }
 
   send(to: string, message: SignalMessage): void {
@@ -167,10 +212,14 @@ export class FanoutSignaling implements Signaling {
     // The others carry on; this one tries again on its own.
     setTimeout(() => {
       if (this.closedByUs || this.open_.has(channel)) return;
-      channel
-        .open()
-        .then(() => this.adopt(channel))
-        .catch(() => undefined);
+      const attempt = channel.open().then(
+        () => {
+          this.adopt(channel);
+          return true;
+        },
+        () => false,
+      );
+      this.opening.set(channel, attempt);
     }, REOPEN_MS);
   }
 

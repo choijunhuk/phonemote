@@ -290,6 +290,44 @@ describe('FanoutSignaling', () => {
     expect(heard).toEqual([['b', { kind: 'offer', sdp: 'v=0' }]]);
   });
 
+  it('lets a phone go ahead on the first channel, without waiting out the slow ones', async () => {
+    // Measured on a real phone: the PhoneMote server was open in a fraction of
+    // a second, and the call still waited the full grace for the brokers.
+    const never = new StubChannel('a', 'open');
+    never.open = () => new Promise<void>(() => undefined);
+    const fanout = new FanoutSignaling('a', [new StubChannel('a', 'open'), never], {
+      stragglerGraceMs: 0,
+    });
+    const opened = await Promise.race([
+      fanout.open().then(() => 'open'),
+      new Promise((resolve) => setTimeout(() => resolve('still waiting'), 200)),
+    ]);
+    expect(opened).toBe('open');
+  });
+
+  it('keeps a room waiting for the slow channels, so a taken code on any is still caught', async () => {
+    const slowTaken = new StubChannel('a', 'taken');
+    slowTaken.open = () =>
+      new Promise<void>((_, reject) => setTimeout(() => reject(new AddressTakenError('a')), 50));
+    const fanout = new FanoutSignaling('a', [new StubChannel('a', 'open'), slowTaken], {
+      stragglerGraceMs: 500,
+    });
+    await expect(fanout.open()).rejects.toBeInstanceOf(AddressTakenError);
+  });
+
+  it('asks the channels still connecting before it says a room is not there', async () => {
+    let release: () => void = () => undefined;
+    const late = new StubChannel('a', 'open', true);
+    late.open = () => new Promise<void>((resolve) => (release = resolve));
+    const fanout = new FanoutSignaling('a', [new StubChannel('a', 'open', false), late], {
+      stragglerGraceMs: 0,
+    });
+    await fanout.open();
+    const answer = fanout.exists('room');
+    setTimeout(() => release(), 50);
+    await expect(answer).resolves.toBe(true);
+  });
+
   it('believes one channel that has seen the room, and all that have not', async () => {
     const yes = new FanoutSignaling('a', [
       new StubChannel('a', 'open', false),
