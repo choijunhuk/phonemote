@@ -14,7 +14,7 @@ raw sensor frames.
 
 ![A Galaxy S24 joins a room by QR code, then two keyboard players play bowling, tennis and archery](docs/images/demo.gif)
 
-<sub>A real Galaxy S24 joining over WebRTC in 3.2 s. The games after it are played by keyboard
+<sub>A real Galaxy S24 joining over WebRTC in 1.4 s. The games after it are played by keyboard
 stand-ins, which send the same raw sensor frames a phone does.</sub>
 
 | Tennis | Bowling | Archery |
