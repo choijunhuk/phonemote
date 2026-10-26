@@ -31,7 +31,7 @@ flowchart LR
   end
   C -- "control channel<br/>ordered, reliable" --> H
   C -- "sensor channel<br/>unordered, no retransmit" --> H
-  C -. "handshake only<br/>(public MQTT + PeerJS)" .- H
+  C -. "handshake: PhoneMote server<br/>(public brokers as fallback);<br/>relay when no direct route" .- H
 ```
 
 - **The phone knows nothing about the game.** It sends raw sensor frames (68 bytes, little-endian
@@ -40,7 +40,8 @@ flowchart LR
 - **Scenes never see sensor data.** They consume `GameAction`s only (`swing`, `tilt`, `pose`,
   `stillness`, …). An ESLint rule enforces the boundary.
 - **Two ways to connect.** The web build hosts the room in the game page and lets phones join over
-  WebRTC, with nothing to install. The LAN build runs a small Node relay over HTTPS/WSS for networks
+  WebRTC, with nothing to install, falling back to a relay through the PhoneMote server when no
+  direct route exists. The LAN build runs a small Node relay over HTTPS/WSS for networks
   without internet access. Both use the same `Room` rules from `packages/protocol`.
 
 ## Engineering notes
@@ -130,12 +131,10 @@ described in Korean in [docs/SETUP.ko.md](docs/SETUP.ko.md).
 
 - **Android Chrome only** on the phone. iOS Safari's motion permission flow is deliberately out of
   scope.
-- **Pairing relies on free public services** (HiveMQ and EMQX MQTT brokers, the PeerJS cloud) for
-  the handshake. Gameplay traffic is peer-to-peer. A production deployment would run its own
-  signaling; the LAN relay is that, for a local network.
-- **No TURN relay.** The public TURN servers PeerJS documents did not answer, so a network that
-  blocks direct UDP between phone and PC cannot connect. Same Wi-Fi, or ordinary home routers,
-  work.
+- **Pairing and the fallback relay run on a small server** of my own (`coms.kw.ac.kr/phonemote`,
+  one container: [deploy/coms](deploy/coms)). The free public brokers are kept as a fallback for
+  signaling. Gameplay goes phone to PC directly when a route exists, and through the server's
+  relay over 443 when it does not, which covers what a TURN server would.
 - The game's interface is in Korean.
 
 ## License
