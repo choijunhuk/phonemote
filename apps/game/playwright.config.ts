@@ -4,10 +4,9 @@ import { defineConfig, devices } from '@playwright/test';
  * End-to-end tests against the web build (ARCHITECTURE.md 8, D57, D60).
  *
  * They play the files that get deployed: `pnpm build:web` first, then this
- * serves dist/web statically, controller included. Every page is opened with
- * `?signal=local`, so phones and game shake hands inside the browser instead
- * of through the public signaling server, and nothing here depends on the
- * internet.
+ * serves dist/web statically, controller included. Pages shake hands inside the
+ * browser (`?signal=local`) or through the PhoneMote server started here, never
+ * through a public service, so nothing here depends on the internet.
  *
  * Everything they write goes under dist/, so the ignores that already cover
  * build output (git, ESLint) cover the reports and screenshots too.
@@ -32,9 +31,18 @@ export default defineConfig({
       args: ['--disable-features=WebRtcHideLocalIpsWithMdns'],
     },
   },
-  webServer: {
-    command: 'pnpm preview:web',
-    url: 'http://localhost:4173/',
-    reuseExistingServer: true,
-  },
+  webServer: [
+    {
+      command: 'pnpm preview:web',
+      url: 'http://localhost:4173/',
+      reuseExistingServer: true,
+    },
+    {
+      // The PhoneMote server (D63), on this machine: the relay tests sign
+      // in to it with `?signal=server&server=ws://localhost:4190`.
+      command: 'pnpm --filter @phonemote/server cloud',
+      url: 'http://127.0.0.1:4190/health',
+      reuseExistingServer: true,
+    },
+  ],
 });

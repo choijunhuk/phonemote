@@ -87,8 +87,9 @@ them settled by measuring a real phone rather than by reasoning. A few of them:
   believes "no room" once the slower channels have answered too. Tap to joined went from 3.2–3.4 s
   to 0.7–1.3 s over seven runs on the same phone and network.
 - **Every game is played in a real browser on every push (D57).** Playwright runs all nine games in
-  every mode for 30 s of game time, plus phones joining over a real `RTCPeerConnection`. The game
-  loop is stepped on a synthetic clock, so a run is deterministic and takes about 45 s. The build
+  every mode for 30 s of game time, plus phones joining over a real `RTCPeerConnection`, through
+  the PhoneMote server started on the CI machine, and through its relay alone. The game loop is
+  stepped on a synthetic clock, so a run is deterministic and takes about a minute. The build
   those tests played is the one that gets deployed.
 
 ## Games
@@ -112,7 +113,7 @@ angle, hand shake. A player who cannot see what they did cannot fix it.
 
 TypeScript (strict, `noUncheckedIndexedAccess`, no `any`) · Phaser 3 · Vite · WebRTC data channels
 · MQTT 3.1.1 and the PeerJS signaling protocol, both implemented directly · Node + `ws` for the LAN
-relay and the PhoneMote server · Docker and nginx · Vitest (698 tests) · Playwright (31 end-to-end
+relay and the PhoneMote server · Docker and nginx · Vitest (701 tests) · Playwright (33 end-to-end
 tests) · GitHub Actions and GitHub Pages · pnpm workspaces
 
 ```

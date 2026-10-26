@@ -4,11 +4,11 @@ import { expect, test, type BrowserContext, type Page } from '@playwright/test';
  * A phone joining the web build, end to end (ARCHITECTURE.md D60).
  *
  * The game page and the controller page run side by side in one browser and
- * connect over a real RTCPeerConnection with real data channels. Only the
- * handshake is local (`?signal=local`, a BroadcastChannel in place of the
- * public signaling server); everything after it — the room's seating, the
- * sensor channel, pings and their pongs, rejoining a kept seat — is the code
- * that runs on a phone.
+ * connect over a real RTCPeerConnection with real data channels. The handshake
+ * is either local (`?signal=local`, a BroadcastChannel) or the PhoneMote server
+ * running on this machine, which is also how the relay is tested (D63);
+ * everything after it — the room's seating, the sensor channel, pings and their
+ * pongs, rejoining a kept seat — is the code that runs on a phone.
  *
  * What it cannot stand in for: an Android phone's sensors, and the networks
  * between a real phone and a real PC. Those stay a manual check.
@@ -39,9 +39,15 @@ function watchForProblems(page: Page): string[] {
   return problems;
 }
 
-async function openGame(context: BrowserContext): Promise<{ game: Page; url: string }> {
+/** The PhoneMote server the config starts on this machine (D63). */
+const SERVER = 'signal=server&server=ws://localhost:4190';
+
+async function openGame(
+  context: BrowserContext,
+  query = 'signal=local',
+): Promise<{ game: Page; url: string }> {
   const game = await context.newPage();
-  await game.goto('./?signal=local');
+  await game.goto(`./?${query}`);
   const url = await game
     .waitForFunction(() => (window as TestWindow).phonemote?.session.room?.controllerUrl)
     .then((handle) => handle.jsonValue());
@@ -88,6 +94,30 @@ function playerNamed(game: Page, name: string): Promise<PlayerView | undefined> 
   );
 }
 
+/** Sensor frames at a real rate and pings answered, for this player, both ways of the link. */
+async function expectStreaming(game: Page, name: string): Promise<void> {
+  // Frames arriving over the sensor channel (or the relay's tunnel), at a real rate.
+  await game.waitForFunction(
+    (wanted) => {
+      const session = (window as TestWindow).phonemote?.session;
+      const player = session?.players.find((entry) => entry.name === wanted);
+      return player !== undefined && (session?.debugInfo(player.id).hz ?? 0) > 20;
+    },
+    name,
+    { timeout: 15_000 },
+  );
+  // The game pings once a second, and the pong comes back the same way.
+  await game.waitForFunction(
+    (wanted) => {
+      const session = (window as TestWindow).phonemote?.session;
+      const player = session?.players.find((entry) => entry.name === wanted);
+      return player !== undefined && (session?.debugInfo(player.id).latency.samples ?? 0) >= 2;
+    },
+    name,
+    { timeout: 15_000 },
+  );
+}
+
 test('a phone joins from the link, and its sensors and pings reach the game', async ({
   context,
 }) => {
@@ -100,27 +130,7 @@ test('a phone joins from the link, and its sensors and pings reach the game', as
   const phoneProblems = watchForProblems(phone);
   await joinAs(phone, url, 'Tester');
   await startSensors(phone);
-
-  // Frames arriving over the unordered sensor channel, at a real rate.
-  await game.waitForFunction(
-    (name) => {
-      const session = (window as TestWindow).phonemote?.session;
-      const player = session?.players.find((entry) => entry.name === name);
-      return player !== undefined && (session?.debugInfo(player.id).hz ?? 0) > 20;
-    },
-    'Tester',
-    { timeout: 15_000 },
-  );
-  // The game pings once a second, and the pong comes back over the control channel.
-  await game.waitForFunction(
-    (name) => {
-      const session = (window as TestWindow).phonemote?.session;
-      const player = session?.players.find((entry) => entry.name === name);
-      return player !== undefined && (session?.debugInfo(player.id).latency.samples ?? 0) >= 2;
-    },
-    'Tester',
-    { timeout: 15_000 },
-  );
+  await expectStreaming(game, 'Tester');
 
   expect(gameProblems).toEqual([]);
   expect(phoneProblems).toEqual([]);
@@ -171,4 +181,50 @@ test('two phones get two seats, and a phone that drops comes back to its own', a
   expect(back?.present).toBe(true);
 
   expect(gameProblems).toEqual([]);
+});
+
+test('a phone joins through the PhoneMote server, over a direct link', async ({ context }) => {
+  // The handshake goes through the real server code on this machine; the
+  // game hands the same choice on to the phone through the link.
+  const { game, url } = await openGame(context, SERVER);
+  const gameProblems = watchForProblems(game);
+  expect(url).toContain('signal=server');
+  expect(url).toContain('server=ws');
+
+  const phone = await context.newPage();
+  const phoneProblems = watchForProblems(phone);
+  const links: string[] = [];
+  phone.on('console', (message) => {
+    if (message.text().startsWith('[link]')) links.push(message.text());
+  });
+  await joinAs(phone, url, 'Direct');
+  await startSensors(phone);
+  await expectStreaming(game, 'Direct');
+  expect(links.some((line) => line.includes('direct link open'))).toBe(true);
+
+  expect(gameProblems).toEqual([]);
+  expect(phoneProblems).toEqual([]);
+});
+
+test('a phone that cannot connect directly plays through the server relay', async ({
+  context,
+}) => {
+  // `relay=only` skips the WebRTC attempt, which is what a network without a
+  // direct route amounts to: the phone tunnels to the room over a WebSocket.
+  const { game, url } = await openGame(context, SERVER);
+  const gameProblems = watchForProblems(game);
+
+  const phone = await context.newPage();
+  const phoneProblems = watchForProblems(phone);
+  const links: string[] = [];
+  phone.on('console', (message) => {
+    if (message.text().startsWith('[link]')) links.push(message.text());
+  });
+  await joinAs(phone, `${url}&relay=only`, 'Relayed');
+  await startSensors(phone);
+  await expectStreaming(game, 'Relayed');
+  expect(links.some((line) => line.includes('relay link open'))).toBe(true);
+
+  expect(gameProblems).toEqual([]);
+  expect(phoneProblems).toEqual([]);
 });
