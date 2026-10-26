@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+.git
+certs
+logs
+traces/*
+!traces/corpus
+.playwright-mcp
+.remember
+.serena

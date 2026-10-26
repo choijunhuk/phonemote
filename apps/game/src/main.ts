@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { BroadcastSignaling, PUBLIC_ICE_SERVERS, publicSignaling } from '@phonemote/peer';
+import { webSetup } from '@phonemote/peer';
 import { GAMES } from './games.js';
 import { PeerHost } from './net/peerHost.js';
 import { CalibrationScene } from './scenes/CalibrationScene.js';
@@ -25,19 +25,22 @@ window.addEventListener('unhandledrejection', (event) => session.reportError(eve
 const params = new URLSearchParams(window.location.search);
 
 if (WEB_BUILD) {
-  // The page is the host (D60). `?signal=local` keeps the handshake inside one
-  // browser, for the end-to-end test; everyone else signals through every
-  // public channel at once (D61).
-  const local = params.get('signal') === 'local';
+  // The page is the host (D60). It signals through the PhoneMote server and
+  // the public channels, and offers the server relay to phones that cannot
+  // reach it directly (D61, D63). The phone's URL carries the same setup.
+  const configured: unknown = import.meta.env['VITE_PHONEMOTE_SERVER'];
+  const setup = webSetup(params, typeof configured === 'string' ? configured : undefined);
   session.start(
     (handlers) =>
       new PeerHost(handlers, {
-        signaling: (address) =>
-          local ? new BroadcastSignaling(address) : publicSignaling(address),
-        iceServers: local ? [] : PUBLIC_ICE_SERVERS,
+        signaling: setup.signaling,
+        iceServers: setup.iceServers,
+        ...(setup.relay ? { relay: setup.relay } : {}),
         controllerUrl: (code) =>
-          new URL(`controller/?room=${code}${local ? '&signal=local' : ''}`, window.location.href)
-            .href,
+          new URL(
+            `controller/?room=${code}${setup.carry ? `&${setup.carry}` : ''}`,
+            window.location.href,
+          ).href,
       }),
   );
   showWebBanner();

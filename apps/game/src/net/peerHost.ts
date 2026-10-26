@@ -1,5 +1,6 @@
 import {
   Room,
+  SENSOR_FRAME_BYTES,
   decodeSensor,
   isClientHello,
   isPong,
@@ -11,28 +12,29 @@ import {
 import {
   AddressTakenError,
   LatestOnly,
+  RelayHost,
   answer,
+  directLink,
   hostAddress,
   type IncomingCall,
-  type PeerLink,
+  type Link,
   type SignalMessage,
   type Signaling,
 } from '@phonemote/peer';
 import { deliverToGame, type GameClientHandlers, type GameLink, type PlayerInfo } from './client.js';
 
 /**
- * The game page as the host for phones joining over WebRTC (ARCHITECTURE.md
- * D60).
+ * The game page as the host for phones joining from the web (ARCHITECTURE.md
+ * D60, D63).
  *
  * What the relay does on the LAN, done here instead: hand out a room code, seat
  * the phones, route pings and haptics, and pass sensor frames to the session.
  * The rules are the relay's own — the same `Room`, from @phonemote/protocol —
- * with each phone's data channels behind a `Connection` where the relay has a
- * WebSocket.
+ * with each phone's link behind a `Connection` where the relay has a socket.
  *
- * The signaling channel is only for joining. Once a phone's channels are open,
- * losing the signaling server costs nothing but new joins, and the host keeps
- * trying to get it back under the same code.
+ * A phone arrives over one of two links: a WebRTC peer connection, or the
+ * PhoneMote server relaying for a phone that could not reach this page
+ * directly. Both are a `Link`, and the room treats them the same.
  */
 
 export interface PeerHostOptions {
@@ -41,6 +43,8 @@ export interface PeerHostOptions {
   readonly iceServers: readonly RTCIceServer[];
   /** The page a phone opens to join this room. */
   readonly controllerUrl: (roomCode: string) => string;
+  /** The server relay, and the token this page's server signaling holds the room with. */
+  readonly relay?: { readonly url: string; readonly token: string };
   readonly randomCode?: () => string;
 }
 
@@ -57,9 +61,11 @@ export class PeerHost implements GameLink {
   private retry: ReturnType<typeof setTimeout> | null = null;
   /** Whether the session has been told the room's code yet. */
   private announced = false;
+  private relayHost: RelayHost | null = null;
+  private relayed = 0;
   /** Phones mid-handshake, by signaling address. */
   private readonly calls = new Map<string, IncomingCall>();
-  /** Phones whose channels are open, by signaling address. */
+  /** Phones whose links are open, by signaling address or relay tunnel. */
   private readonly links = new Map<string, () => void>();
   private readonly latest = new LatestOnly();
 
@@ -76,7 +82,7 @@ export class PeerHost implements GameLink {
       close: () => undefined,
     };
     // Created now rather than once a code is registered, so keyboard players
-    // can be seated, and play, even when the signaling server is unreachable.
+    // can be seated, and play, even when no signaling server is reachable.
     this.room = new Room('', game);
   }
 
@@ -126,6 +132,7 @@ export class PeerHost implements GameLink {
       if (this.code !== code || !this.announced) {
         this.code = code;
         this.announced = true;
+        this.startRelay(code);
         this.handlers.onRoom({
           roomCode: code,
           wsUrl: '',
@@ -135,6 +142,18 @@ export class PeerHost implements GameLink {
       return;
     }
     this.retryLater();
+  }
+
+  /** Offer to carry phones that cannot reach this page directly. */
+  private startRelay(code: string): void {
+    const relay = this.options.relay;
+    if (!relay) return;
+    this.relayHost?.stop();
+    this.relayHost = new RelayHost(relay.url, hostAddress(code), relay.token, (link) => {
+      this.relayed++;
+      this.adopt(`relay-${this.relayed}`, link);
+    });
+    this.relayHost.start();
   }
 
   private listen(signaling: Signaling): Signaling {
@@ -159,13 +178,13 @@ export class PeerHost implements GameLink {
       const call = answer(signaling, from, message.sdp, { iceServers: this.options.iceServers });
       this.calls.set(from, call);
       call.link
-        .then((link) => {
+        .then((peer) => {
           if (this.calls.get(from) !== call) {
-            link.connection.close();
+            peer.connection.close();
             return;
           }
           this.calls.delete(from);
-          this.adopt(from, link);
+          this.adopt(from, directLink(peer, SENSOR_FRAME_BYTES * 3));
         })
         .catch(() => {
           if (this.calls.get(from) === call) this.calls.delete(from);
@@ -181,35 +200,33 @@ export class PeerHost implements GameLink {
     this.calls.delete(from);
   }
 
-  /** A phone's channels are open: give it the relay's treatment. */
-  private adopt(address: string, link: PeerLink): void {
-    const { control, sensor, connection: peer } = link;
+  /** A phone's link is open: give it the relay's treatment. */
+  private adopt(key: string, link: Link): void {
     let ended = false;
 
     const connection: Connection = {
       // The room only ever sends a phone JSON.
       send: (data) => {
-        if (typeof data === 'string' && control.readyState === 'open') control.send(data);
+        if (typeof data === 'string') link.sendControl(data);
       },
-      close: () => peer.close(),
+      close: () => link.close(),
       get bufferedAmount() {
-        return control.bufferedAmount;
+        return link.bufferedAmount;
       },
     };
 
     const end = (): void => {
       if (ended) return;
       ended = true;
-      this.links.delete(address);
+      this.links.delete(key);
       // A phone that drops keeps its seat for the rejoin window (D48).
       this.room.removeController(connection);
-      peer.close();
+      link.close();
     };
-    this.links.set(address, end);
+    this.links.set(key, end);
 
-    control.addEventListener('message', (event: MessageEvent<unknown>) => {
-      if (typeof event.data !== 'string') return;
-      const message = parseMessage(event.data);
+    link.onControl((text) => {
+      const message = parseMessage(text);
       if (!message) return;
 
       if (isClientHello(message) && message.role === 'controller') {
@@ -242,13 +259,12 @@ export class PeerHost implements GameLink {
       }
     });
 
-    sensor.addEventListener('message', (event: MessageEvent<unknown>) => {
-      if (!(event.data instanceof ArrayBuffer)) return;
+    link.onSensor((data) => {
       const player = this.room.findPlayerByConnection(connection);
       if (!player) return;
       let frame;
       try {
-        frame = decodeSensor(event.data);
+        frame = decodeSensor(data);
       } catch {
         return;
       }
@@ -259,10 +275,6 @@ export class PeerHost implements GameLink {
       this.handlers.onFrame(frame);
     });
 
-    control.addEventListener('close', end);
-    peer.addEventListener('connectionstatechange', () => {
-      const state = peer.connectionState;
-      if (state === 'disconnected' || state === 'failed' || state === 'closed') end();
-    });
+    link.onEnd(end);
   }
 }

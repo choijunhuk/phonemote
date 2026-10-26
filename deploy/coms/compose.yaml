@@ -1,0 +1,11 @@
+# One container, published on the loopback interface only: nginx is the sole
+# way in, and only under /phonemote/. Nothing else on the host is touched.
+services:
+  phonemote:
+    build:
+      context: ../..
+      dockerfile: deploy/coms/Dockerfile
+    container_name: phonemote
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:4190:4190'

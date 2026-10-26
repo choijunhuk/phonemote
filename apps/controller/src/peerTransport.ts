@@ -4,8 +4,10 @@ import {
   RoomNotFoundError,
   callerAddress,
   dial,
+  directLink,
   hostAddress,
-  type PeerLink,
+  relayLink,
+  type Link,
   type Signaling,
 } from '@phonemote/peer';
 import {
@@ -16,28 +18,33 @@ import {
 } from './transport.js';
 
 /**
- * The phone's link to the game page in the web build (ARCHITECTURE.md D60).
+ * The phone's link to the game page in the web build (ARCHITECTURE.md D60,
+ * D63).
  *
- * Says exactly what the relay transport says — hello, pong — over a WebRTC
- * data channel instead of a socket, and sends sensor frames over a second,
- * unordered channel that never retransmits. Reconnects on its own after a
- * drop, as the relay transport does; the room keeps the seat warm meanwhile.
+ * Says exactly what the relay transport says — hello, pong — over whichever
+ * link it gets: a WebRTC connection straight to the page, or, when no direct
+ * route exists, the PhoneMote server relaying over WebSockets. Reconnects on
+ * its own after a drop; the room keeps the seat warm meanwhile.
  */
 
 export interface PeerTransportOptions {
   readonly signaling: (address: string) => Signaling;
   readonly iceServers: readonly RTCIceServer[];
+  /** The server relay to fall back on. */
+  readonly relayUrl?: string;
+  /** Skip the direct attempt (for testing the relay). */
+  readonly relayOnly?: boolean;
 }
 
 const RETRY_MS = 1500;
-/** How long to keep calling a room the broker says does not exist. */
-const ABSENT_ROOM_GRACE_MS = 6000;
 /** Calls in a row that never got through before a first join, before giving up. */
 const MAX_FAILED_CALLS = 4;
+/** How long to keep calling a room the broker says does not exist. */
+const ABSENT_ROOM_GRACE_MS = 6000;
 
 export class PeerTransport implements ControllerLink {
   private signaling: Signaling | null = null;
-  private link: PeerLink | null = null;
+  private link: Link | null = null;
   private playerId: number | null = null;
   private everJoined = false;
   private closedByUs = false;
@@ -62,12 +69,7 @@ export class PeerTransport implements ControllerLink {
   }
 
   sendFrame(buffer: ArrayBuffer): boolean {
-    const channel = this.link?.sensor;
-    if (!channel || channel.readyState !== 'open') return false;
-    // Backpressure, as on the socket: a channel already behind skips the frame.
-    if (channel.bufferedAmount > MAX_BUFFERED_BYTES) return false;
-    channel.send(buffer);
-    return true;
+    return this.link?.sendSensor(buffer) ?? false;
   }
 
   close(): void {
@@ -76,7 +78,7 @@ export class PeerTransport implements ControllerLink {
       window.clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
-    this.link?.connection.close();
+    this.link?.close();
     this.link = null;
     this.signaling?.close();
     this.signaling = null;
@@ -87,28 +89,12 @@ export class PeerTransport implements ControllerLink {
     this.handlers.onState(this.everJoined ? 'reconnecting' : 'connecting');
     const started = performance.now();
     const since = (): string => `${Math.round(performance.now() - started)} ms`;
+    const room = hostAddress(this.roomCode);
     try {
-      const signaling = await this.openSignaling();
-      console.info(`[link] signaling open after ${since()}`);
-      const room = hostAddress(this.roomCode);
-      // The room's claim is looked up while the call is already being made:
-      // waiting for the lookup first added up to five seconds to every join.
-      // When the broker confirms nobody holds the code, the call is still
-      // given a few seconds — a wrong "no" must not lock a phone out — and
-      // then abandoned, so a mistyped code fails in seconds, not after retries.
-      const lookup = signaling.exists?.(room) ?? Promise.resolve(null);
-      const abandon = lookup.then(
-        (present) =>
-          new Promise<Error>((resolve) => {
-            if (present === false) {
-              window.setTimeout(() => resolve(new RoomNotFoundError()), ABSENT_ROOM_GRACE_MS);
-            }
-          }),
-      );
-      const link = await dial(signaling, room, { iceServers: this.options.iceServers, abandon });
-      console.info(`[link] channels open after ${since()}`);
+      const link = this.options.relayOnly ? await this.viaRelay(room) : await this.direct(room, since);
+      console.info(`[link] ${link.kind} link open after ${since()}`);
       if (this.closedByUs) {
-        link.connection.close();
+        link.close();
         return;
       }
       this.adopt(link);
@@ -133,6 +119,41 @@ export class PeerTransport implements ControllerLink {
     }
   }
 
+  /**
+   * Straight to the page over WebRTC, and through the server if that fails:
+   * a network that blocks the direct route still lets 443 out.
+   */
+  private async direct(room: string, since: () => string): Promise<Link> {
+    const signaling = await this.openSignaling();
+    console.info(`[link] signaling open after ${since()}`);
+    // The room's claim is looked up while the call is already being made.
+    // When nobody holds the code, the call is still given a few seconds — a
+    // wrong "no" must not lock a phone out — and then abandoned.
+    const lookup = signaling.exists?.(room) ?? Promise.resolve(null);
+    const abandon = lookup.then(
+      (present) =>
+        new Promise<Error>((resolve) => {
+          if (present === false) {
+            window.setTimeout(() => resolve(new RoomNotFoundError()), ABSENT_ROOM_GRACE_MS);
+          }
+        }),
+    );
+    try {
+      const peer = await dial(signaling, room, { iceServers: this.options.iceServers, abandon });
+      return directLink(peer, MAX_BUFFERED_BYTES);
+    } catch (error) {
+      if (error instanceof RoomNotFoundError || !this.options.relayUrl) throw error;
+      console.info(`[link] no direct route (${String(error)}), trying the relay`);
+      return this.viaRelay(room);
+    }
+  }
+
+  private viaRelay(room: string): Promise<Link> {
+    const url = this.options.relayUrl;
+    if (!url) return Promise.reject(new Error('No relay configured.'));
+    return relayLink(url, room, MAX_BUFFERED_BYTES);
+  }
+
   /** One signaling address for the life of this transport, kept between calls. */
   private async openSignaling(): Promise<Signaling> {
     if (this.signaling) return this.signaling;
@@ -154,14 +175,12 @@ export class PeerTransport implements ControllerLink {
     throw new Error('No free signaling address.');
   }
 
-  private adopt(link: PeerLink): void {
+  private adopt(link: Link): void {
     this.link = link;
     this.failures = 0;
-    const { control, connection } = link;
 
-    control.addEventListener('message', (event: MessageEvent<unknown>) => {
-      if (typeof event.data !== 'string') return;
-      const message = parseMessage(event.data);
+    link.onControl((text) => {
+      const message = parseMessage(text);
       if (!message) return;
 
       if (message.type === 'joined') {
@@ -172,7 +191,7 @@ export class PeerTransport implements ControllerLink {
       }
       if (message.type === 'ping') {
         // Echoed at once; the game measures round trips, never one way.
-        control.send(JSON.stringify({ ...message, type: 'pong' }));
+        link.sendControl(JSON.stringify({ ...message, type: 'pong' }));
         return;
       }
       if (message.type === 'error' && TERMINAL_ERRORS.has(message.code)) {
@@ -182,7 +201,7 @@ export class PeerTransport implements ControllerLink {
       this.handlers.onServerMessage(message as ServerMsg | Feedback);
     });
 
-    control.send(
+    link.sendControl(
       JSON.stringify({
         type: 'hello',
         role: 'controller',
@@ -192,18 +211,12 @@ export class PeerTransport implements ControllerLink {
       }),
     );
 
-    const lost = (): void => {
+    link.onEnd(() => {
       if (this.link !== link) return;
       this.link = null;
-      connection.close();
       if (this.closedByUs) return;
       this.handlers.onState('reconnecting', `${RETRY_MS / 1000}초 후 재시도`);
       this.scheduleRetry();
-    };
-    control.addEventListener('close', lost);
-    connection.addEventListener('connectionstatechange', () => {
-      const state = connection.connectionState;
-      if (state === 'disconnected' || state === 'failed' || state === 'closed') lost();
     });
   }
 

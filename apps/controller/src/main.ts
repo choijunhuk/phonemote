@@ -3,7 +3,7 @@ import {
   encodeSensor,
   type SensorFrame,
 } from '@phonemote/protocol';
-import { BroadcastSignaling, PUBLIC_ICE_SERVERS, publicSignaling } from '@phonemote/peer';
+import { webSetup } from '@phonemote/peer';
 import { formatSnapshot } from './debug.js';
 import { clientId } from './identity.js';
 import { PeerTransport } from './peerTransport.js';
@@ -49,11 +49,16 @@ function linkFor(
   name: string | undefined,
 ): ControllerLink {
   if (!WEB_BUILD) return new Transport(roomCode, handlers, name, clientId());
-  // `?signal=local` keeps the handshake inside one browser, for the e2e test.
-  const local = new URLSearchParams(window.location.search).get('signal') === 'local';
+  // Set up as the game set it up: its QR code's URL carries the same options.
+  const params = new URLSearchParams(window.location.search);
+  const configured: unknown = import.meta.env['VITE_PHONEMOTE_SERVER'];
+  const setup = webSetup(params, typeof configured === 'string' ? configured : undefined);
   return new PeerTransport(roomCode, handlers, name, clientId(), {
-    signaling: (address) => (local ? new BroadcastSignaling(address) : publicSignaling(address)),
-    iceServers: local ? [] : PUBLIC_ICE_SERVERS,
+    signaling: setup.signaling,
+    iceServers: setup.iceServers,
+    ...(setup.relay ? { relayUrl: setup.relay.url } : {}),
+    // `?relay=only` skips the direct attempt, for testing the relay.
+    relayOnly: params.get('relay') === 'only',
   });
 }
 
